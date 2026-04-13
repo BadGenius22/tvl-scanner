@@ -22,8 +22,10 @@ from datetime import date
 from pathlib import Path
 
 from tvl_scanner.config import settings
+from tvl_scanner.discover.alchemy import fetch_fresh_deployments as fetch_alchemy
 from tvl_scanner.discover.birdeye import fetch_top_pairs as fetch_birdeye
 from tvl_scanner.discover.geckoterminal import fetch_new_pools as fetch_geckoterminal
+from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.http import make_client
 from tvl_scanner.models import Chain, DiscoveredContract
 
@@ -78,11 +80,22 @@ async def discover_all(
     scan_date = scan_date or date.today()
 
     async with make_client() as client:
+        price_cache = PriceCache()
         # Parallelize: one task per (source, chain) pair.
         tasks: list[asyncio.Task[list[DiscoveredContract]]] = []
         for chain in chains:
             tasks.append(asyncio.create_task(fetch_geckoterminal(chain, client=client)))
             tasks.append(asyncio.create_task(fetch_birdeye(chain, client=client)))
+            tasks.append(
+                asyncio.create_task(
+                    fetch_alchemy(
+                        chain,
+                        price_cache=price_cache,
+                        client=client,
+                        scan_date=scan_date,
+                    )
+                )
+            )
         all_results = await asyncio.gather(*tasks, return_exceptions=True)
 
     merged: list[DiscoveredContract] = []

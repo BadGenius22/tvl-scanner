@@ -40,6 +40,7 @@ class DiscoverySource(str, Enum):
     GECKOTERMINAL = "geckoterminal"
     BIRDEYE = "birdeye"
     DEFILLAMA_CATALOG = "defillama_catalog"
+    ALCHEMY_DEPLOYMENTS = "alchemy_deployments"
     FACTORY_EVENTS = "factory_events"
     DUNE = "dune"
     FLIPSIDE = "flipside"
