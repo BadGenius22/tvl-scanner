@@ -1,0 +1,58 @@
+# Known Solana wrapper / framework programs.
+#
+# When a candidate's primary contract account is owned by one of these
+# programs, the protocol is a thin DEPLOYMENT of the program rather than
+# custom code. The audit history of the upstream program is what actually
+# secures the candidate's TVL — there's no novel attack surface to find.
+#
+# Used by enrich/solana_wrapper_check.py. Match is by exact program_id
+# string against the `owner` field returned by `getAccountInfo`.
+#
+# Fields:
+#   program_id     — base58 Solana program address
+#   name           — human-readable upstream program name
+#   audit_count    — number of independent audits the upstream program has
+#   audit_url      — public link to the upstream audit history
+#   description    — one-sentence context for the report
+
+- program_id: SPoo1Ku8WFXoNDMHPsrGSTSG1Y47rzgn41SLUNakuHy
+  name: SPL Stake Pool
+  audit_count: 3
+  audit_url: https://spl.solana.com/stake-pool#security-audits
+  description: Solana Foundation native stake pool program. Used by JPool, JagPool, BlazeStake, Cogent, Edgevana, Lido on Solana, and many others.
+
+- program_id: Stake11111111111111111111111111111111111111
+  name: Native Solana Stake Program
+  audit_count: 99
+  audit_url: https://github.com/solana-labs/solana
+  description: Solana core stake program. Part of the L1 itself.
+
+- program_id: Vote111111111111111111111111111111111111111
+  name: Native Solana Vote Program
+  audit_count: 99
+  audit_url: https://github.com/solana-labs/solana
+  description: Solana core vote program. Part of the L1 itself.
+
+- program_id: Token-2022Program11111111111111111111111111111
+  name: SPL Token 2022
+  audit_count: 4
+  audit_url: https://spl.solana.com/token-2022#security-audits
+  description: Solana Foundation Token-2022 standard. Audited multiple times.
+
+- program_id: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+  name: SPL Token (legacy)
+  audit_count: 5
+  audit_url: https://spl.solana.com/token
+  description: Original SPL Token program. Audited many times.
+
+- program_id: ComputeBudget111111111111111111111111111111
+  name: Solana Compute Budget Program
+  audit_count: 99
+  audit_url: https://github.com/solana-labs/solana
+  description: Solana core compute budget program. Part of the L1.
+
+- program_id: BPFLoaderUpgradeab1e11111111111111111111111
+  name: BPF Upgradeable Loader
+  audit_count: 99
+  audit_url: https://github.com/solana-labs/solana
+  description: Solana core BPF loader. Part of the L1.

@@ -33,6 +33,14 @@ from tvl_scanner.config import settings
 from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.github import enrich_repo
+from tvl_scanner.enrich.homepage_scrape import scrape_homepage
+from tvl_scanner.enrich.prices import PriceCache
+from tvl_scanner.enrich.solana_wrapper_check import (
+    WrapperMatch,
+    check_wrapper_program,
+    compute_on_chain_lst_tvl,
+)
+from tvl_scanner.models import AuditSource, AuditSourceKind
 
 
 def _coerce_audit_count(raw: Any) -> int | None:
@@ -213,6 +221,7 @@ async def _process_protocol(
     first_seen: date,
     catalog: DefiLlamaCatalog,
     client: httpx.AsyncClient | None,
+    price_cache: PriceCache | None = None,
 ) -> EnrichedCandidate | None:
     """Per-protocol HTTP work: detail fetch + github enrichment + bounty match.
 
@@ -280,6 +289,73 @@ async def _process_protocol(
         bounty_url = bounty_entry.url if bounty_entry else None
         bounty_payout = bounty_entry.max_payout_usd if bounty_entry else None
 
+        # BATCH J1: Solana wrapper-program detection. For Solana candidates
+        # that match a known LST in our mint registry, query the stake pool
+        # account's owner. If owned by SPL Stake Pool (or similar wrapper),
+        # generate a synthetic AuditSource crediting the upstream program's
+        # audit history.
+        precomputed_sources: list[AuditSource] = []
+        if chain == Chain.SOLANA:
+            from tvl_scanner.enrich.solana_wrapper_check import check_lst_wrapper
+            wrapper_match = await check_lst_wrapper(slug, client=client)
+            if wrapper_match:
+                precomputed_sources.append(
+                    AuditSource(
+                        source=AuditSourceKind.WRAPPER_PROGRAM,
+                        url=wrapper_match.entry.audit_url,  # type: ignore[arg-type]
+                        title=(
+                            f"Wraps {wrapper_match.entry.name} "
+                            f"(owner: {wrapper_match.account_owner[:12]}…) — "
+                            f"{wrapper_match.entry.audit_count} prior audits"
+                        ),
+                        weight=max(4, wrapper_match.entry.audit_count),
+                    )
+                )
+
+        # BATCH J2: on-chain TVL sanity check for LSTs. If the LST is in our
+        # mint registry, fetch its actual mint supply and compare to
+        # DefiLlama's claim. >10x discrepancy → trust on-chain.
+        actual_tvl_usd: float | None = None
+        if chain == Chain.SOLANA and price_cache is not None:
+            sol_price = await price_cache.get(Chain.SOLANA, client=client)
+            if sol_price > 0:
+                actual_tvl_usd = await compute_on_chain_lst_tvl(
+                    slug, sol_price, client=client
+                )
+                if actual_tvl_usd is not None and actual_tvl_usd * 10 < float(tvl):
+                    log.warning(
+                        "%s: DefiLlama TVL $%.0f contradicts on-chain $%.2f, overriding",
+                        slug,
+                        float(tvl),
+                        actual_tvl_usd,
+                    )
+                    tvl = actual_tvl_usd
+
+        # BATCH K: homepage scrape — fetch the protocol's url and regex for
+        # known wrapper phrases and audit firm mentions. Catches Hyperlane-
+        # class private-firm audits that DefiLlama and GitHub orgs miss.
+        homepage_url = protocol.get("url") or (detail.get("url") if detail else None)
+        if isinstance(homepage_url, str):
+            scrape = await scrape_homepage(homepage_url, client=client)
+            for firm in scrape.audit_firm_matches:
+                precomputed_sources.append(
+                    AuditSource(
+                        source=AuditSourceKind.HOMEPAGE_SCRAPE,
+                        url=homepage_url,  # type: ignore[arg-type]
+                        title=f"{firm} audit cited on protocol homepage",
+                        weight=4,
+                    )
+                )
+            for wrapper_tag in scrape.wrapper_matches:
+                precomputed_sources.append(
+                    AuditSource(
+                        source=AuditSourceKind.HOMEPAGE_SCRAPE,
+                        url=homepage_url,  # type: ignore[arg-type]
+                        title=f"Wrapper of {wrapper_tag} (cited on homepage)",
+                        weight=4,
+                    )
+                )
+
         return EnrichedCandidate(
             chain=chain,
             address=f"defillama:{slug}",
@@ -304,6 +380,7 @@ async def _process_protocol(
             github_audits_folder_exists=bool(
                 repo_metadata and repo_metadata.audits_folder_exists
             ),
+            precomputed_audit_sources=precomputed_sources,
         )
     except Exception as exc:
         log.warning("defillama protocol discovery: skipped entry: %s", exc)
@@ -314,6 +391,7 @@ async def discover_from_defillama_catalog(
     *,
     scan_date: date | None = None,
     client: httpx.AsyncClient | None = None,
+    price_cache: PriceCache | None = None,
 ) -> list[EnrichedCandidate]:
     """Walk the DefiLlama catalog, apply filters, produce EnrichedCandidates.
 
@@ -361,7 +439,7 @@ async def discover_from_defillama_catalog(
     ) -> EnrichedCandidate | None:
         async with sem:
             return await _process_protocol(
-                protocol, chain, first_seen, catalog, client
+                protocol, chain, first_seen, catalog, client, price_cache=price_cache
             )
 
     task_results = await asyncio.gather(

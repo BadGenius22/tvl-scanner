@@ -1,0 +1,33 @@
+# Known EVM pool bytecode hashes.
+#
+# When a candidate's `eth_getCode` returns runtime bytecode whose keccak256
+# matches one of these, the contract is a deployment of a known DEX
+# factory — i.e. a pool of an audited protocol, not a fresh code shipment.
+#
+# Used by enrich/evm_bytecode_check.py. The hash is the keccak256 of the
+# RUNTIME bytecode (output of eth_getCode), NOT the deployment init code.
+#
+# To populate a new entry: deploy a pool, run `cast keccak $(cast code <addr>)`
+# (or the JSON-RPC equivalent), record the hash. Same hash will appear for
+# every pool of that protocol on every EVM chain because the factories
+# use deterministic CREATE2.
+#
+# Format:
+#   bytecode_hash      — 0x-prefixed keccak256 hex string (lowercase)
+#   name               — human-readable pool type
+#   upstream_protocol  — protocol slug for attribution
+#   audit_count        — known audit count for the upstream protocol
+#   audit_url          — link to upstream audit history (optional)
+
+# NOTE: the hashes below are placeholders for the pattern. When the scanner
+# encounters an EVM pool candidate, it will compute the hash and compare.
+# Adding new entries requires a one-time manual hash extraction per protocol.
+# Empty list is valid — the module degrades to "no match found, treat as
+# fresh" which is the safe default.
+
+# Example (uncomment and fill in real hashes when known):
+# - bytecode_hash: "0xa9a4..."
+#   name: Uniswap V2 Pair
+#   upstream_protocol: uniswap-v2
+#   audit_count: 3
+#   audit_url: https://github.com/Uniswap/v2-core/tree/master/audits

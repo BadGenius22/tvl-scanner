@@ -56,6 +56,8 @@ class AuditSourceKind(str, Enum):
     CANTINA = "cantina"
     DOCS_MENTION = "docs_mention"
     BOUNTY_TRUST = "bounty_trust"
+    WRAPPER_PROGRAM = "wrapper_program"  # Batch J: protocol wraps a known audited program (SPL stake pool, Uniswap V2 pair, etc.)
+    HOMEPAGE_SCRAPE = "homepage_scrape"  # Batch K: regex hit on the protocol's own homepage citing an audit firm
 
 
 class AuditSource(BaseModel):
@@ -126,6 +128,11 @@ class EnrichedCandidate(BaseModel):
     is_proxy: bool = False
     proxy_impl_address: str | None = None
     compiler_version: str | None = None
+
+    # Pre-computed audit sources from Batch J/K detection (wrapper programs,
+    # bytecode pattern matches, homepage regex hits). compute_score in stage 3
+    # appends these to its all_sources list. Default empty.
+    precomputed_audit_sources: list[AuditSource] = Field(default_factory=list)
 
 
 class AuditedCandidate(EnrichedCandidate):

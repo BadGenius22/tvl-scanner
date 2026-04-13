@@ -27,10 +27,14 @@ from tvl_scanner.config import settings
 from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
+from tvl_scanner.enrich.evm_bytecode_check import check_bytecode_match
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
+from tvl_scanner.enrich.homepage_scrape import scrape_homepage
 from tvl_scanner.enrich.ottersec import check_ottersec_verification
 from tvl_scanner.http import make_client
 from tvl_scanner.models import (
+    AuditSource,
+    AuditSourceKind,
     Chain,
     DiscoveredContract,
     EnrichedCandidate,
@@ -204,6 +208,55 @@ async def enrich_one(
             contract.chain, contract.address, client=client
         )
 
+    # BATCH J3: EVM bytecode pattern check. For pool-based candidates with a
+    # real EVM address (not synthetic defillama:slug), query eth_getCode and
+    # check the keccak256 against our registry of known DEX pool patterns
+    # (Uniswap V2/V3 pair, Curve, Balancer, etc.). If matched, the candidate
+    # is a deployment of an audited factory and gets a synthetic AuditSource.
+    precomputed_sources: list[AuditSource] = []
+    if contract.chain != Chain.SOLANA and contract.address.startswith("0x"):
+        bytecode_match = await check_bytecode_match(
+            contract.chain, contract.address, client=client
+        )
+        if bytecode_match:
+            precomputed_sources.append(
+                AuditSource(
+                    source=AuditSourceKind.WRAPPER_PROGRAM,
+                    url=bytecode_match.entry.audit_url,  # type: ignore[arg-type]
+                    title=(
+                        f"Bytecode matches {bytecode_match.entry.name} "
+                        f"(upstream: {bytecode_match.entry.upstream_protocol}, "
+                        f"{bytecode_match.entry.audit_count} prior audits)"
+                    ),
+                    weight=max(4, bytecode_match.entry.audit_count),
+                )
+            )
+
+    # BATCH K: homepage scrape for pool-based candidates. The url comes from
+    # the DefiLlama match (if any).
+    if dl_match:
+        homepage_url = dl_match.get("url")
+        if isinstance(homepage_url, str):
+            scrape = await scrape_homepage(homepage_url, client=client)
+            for firm in scrape.audit_firm_matches:
+                precomputed_sources.append(
+                    AuditSource(
+                        source=AuditSourceKind.HOMEPAGE_SCRAPE,
+                        url=homepage_url,  # type: ignore[arg-type]
+                        title=f"{firm} audit cited on protocol homepage",
+                        weight=4,
+                    )
+                )
+            for wrapper_tag in scrape.wrapper_matches:
+                precomputed_sources.append(
+                    AuditSource(
+                        source=AuditSourceKind.HOMEPAGE_SCRAPE,
+                        url=homepage_url,  # type: ignore[arg-type]
+                        title=f"Wrapper of {wrapper_tag} (cited on homepage)",
+                        weight=4,
+                    )
+                )
+
     languages = _derive_languages(contract.chain, repo_metadata)
 
     # Bounty registry lookup (seeds file) — upgrades bounty_program from "none"
@@ -246,6 +299,7 @@ async def enrich_one(
         is_proxy=verification.is_proxy,
         proxy_impl_address=verification.proxy_impl_address,
         compiler_version=verification.compiler_version,
+        precomputed_audit_sources=precomputed_sources,
     )
 
 

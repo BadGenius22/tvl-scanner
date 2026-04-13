@@ -1,0 +1,33 @@
+# Solana liquid staking token (LST) mint addresses.
+#
+# Used by enrich/solana_wrapper_check.py for on-chain TVL sanity checking:
+# fetch the mint supply via getTokenSupply, multiply by SOL price, compare
+# against DefiLlama's claimed TVL. If DefiLlama is >10x off, override
+# with the on-chain reality.
+#
+# Add new entries when you encounter LST candidates that don't get TVL
+# sanity-checked. Slug is the DefiLlama protocol slug.
+
+- slug: jagpool-staked-sol
+  mint: jag7A2z4QNacNi61AXpyRiyUppx5GeLbGEKAapuKCRs
+  stake_pool: jagPCXWPBwoah9K4PxzHoh8z7aSru4Vbxq7GKUeEzgY
+
+- slug: jito-sol
+  mint: J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn
+  stake_pool: Jito4APyf642JPZPx3hGc6WWJ8zPKtRbRs4P815Awbb
+
+- slug: marinade-finance
+  mint: mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So
+  stake_pool: 8szGkuLTAux9XMgZ2vtY39jVSowEcpBfFfD8hXSEqdGC  # Marinade state account
+
+- slug: marinade
+  mint: mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So
+  stake_pool: 8szGkuLTAux9XMgZ2vtY39jVSowEcpBfFfD8hXSEqdGC
+
+- slug: blazestake
+  mint: bSo13r4TkiE4KumL71LsHTPpL2euBYLFx6h9HP3piy1
+  stake_pool: stk9ApL5HeVAwPLr3TLhDXdZS8ptVu7zp6ov8HFDuMi
+
+- slug: lido-on-solana
+  mint: 7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj
+  stake_pool: 49Yi1TKkNyYjPAFdR9LBvoHcUjuPX4Df5T5yv39w2XTn

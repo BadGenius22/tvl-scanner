@@ -175,6 +175,10 @@ def compute_score(
     all_sources.extend(_defillama_sources(candidate))
     all_sources.extend(_github_folder_source(candidate))
     all_sources.extend(_bounty_trust_source(candidate))
+    # BATCH J/K: pre-computed sources from wrapper detection, bytecode
+    # pattern matching, and homepage scraping. Stage 2 enrichment populates
+    # these on the EnrichedCandidate; here we just include them in the total.
+    all_sources.extend(candidate.precomputed_audit_sources)
     all_sources.extend(contest_sources)
 
     total_score = sum(src.weight for src in all_sources)
@@ -188,6 +192,18 @@ def compute_score(
         and candidate.defillama_audit_count >= 2
     ):
         under_audited = False
+
+    # BATCH J/K override: a single wrapper-program or homepage-scrape source
+    # is also definitive evidence of prior auditing — these are signals the
+    # other override paths miss (DefiLlama doesn't track wrappers, doesn't
+    # scrape homepages).
+    for src in candidate.precomputed_audit_sources:
+        if src.source in (
+            AuditSourceKind.WRAPPER_PROGRAM,
+            AuditSourceKind.HOMEPAGE_SCRAPE,
+        ):
+            under_audited = False
+            break
 
     return AuditedCandidate(
         **candidate.model_dump(),

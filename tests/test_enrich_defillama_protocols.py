@@ -22,18 +22,28 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _mock_detail_404_for_all(httpx_mock: HTTPXMock) -> None:
-    """Register a catch-all 404 mock for every /protocol/<slug> detail URL.
+    """Register catch-all 404 mocks for every /protocol/<slug> detail URL AND
+    every protocol homepage URL.
 
-    Batch G wired catalog-discovery through fetch_detail — the existing tests
-    didn't anticipate that extra HTTP call. Returning 404 here exercises the
-    "detail fetch failed, fall back to flat catalog data" path, which is the
-    exact behavior we want under test (we're verifying that catalog discovery
-    still works even when the detail endpoint is unavailable).
+    Batch G wired catalog-discovery through fetch_detail. Batch J/K added a
+    homepage scrape that fires for every catalog candidate. Both extra HTTP
+    calls need to be mocked here — returning 404 exercises the "fetch failed,
+    fall back to flat catalog data" path, which is the exact behavior we
+    want under test (we're verifying that catalog discovery still works even
+    when both endpoints are unavailable).
     """
     httpx_mock.add_response(
         url=re.compile(r"^https://api\.llama\.fi/protocol/.*$"),
         status_code=404,
         json={"error": "not found"},
+        is_reusable=True,
+    )
+    # Catch-all for protocol homepage URLs (Batch K homepage scrape). Match
+    # any HTTPS URL not on api.llama.fi.
+    httpx_mock.add_response(
+        url=re.compile(r"^https://(?!api\.llama\.fi).*$"),
+        status_code=404,
+        text="",
         is_reusable=True,
     )
 
@@ -136,6 +146,14 @@ async def test_catalog_discovery_populates_audit_count_from_detail(
     from /protocol/{slug} detail calls.
     """
     httpx_mock.add_response(url="https://api.llama.fi/protocols", json=catalog_sample)
+    # Catch-all 404 for protocol homepage URLs (Batch K homepage scrape will
+    # try to fetch each protocol's `url` field).
+    httpx_mock.add_response(
+        url=re.compile(r"^https://(?!api\.llama\.fi).*$"),
+        status_code=404,
+        text="",
+        is_reusable=True,
+    )
     # Every slug EXCEPT aave-v3 returns 404; aave-v3 returns a successful detail
     # with audit_count=3 and an audit_note.
     httpx_mock.add_response(
