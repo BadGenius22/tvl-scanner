@@ -55,6 +55,7 @@ class AuditSourceKind(str, Enum):
     SHERLOCK = "sherlock"
     CANTINA = "cantina"
     DOCS_MENTION = "docs_mention"
+    BOUNTY_TRUST = "bounty_trust"
 
 
 class AuditSource(BaseModel):

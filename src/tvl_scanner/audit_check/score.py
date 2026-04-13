@@ -94,6 +94,61 @@ def _github_folder_source(candidate: EnrichedCandidate) -> list[AuditSource]:
     ]
 
 
+# Minimum bounty payout (USD) below which we don't trust the program as
+# evidence of prior auditing. Below ~$100K, bounty programs are common for
+# unaudited code (community bounties, beta tests). At $100K+, platforms like
+# Immunefi require audit reports during onboarding.
+BOUNTY_TRUST_MIN_PAYOUT_USD = 100_000
+BOUNTY_TRUST_WEIGHT = 4
+
+
+def _bounty_trust_source(candidate: EnrichedCandidate) -> list[AuditSource]:
+    """If the candidate has a substantial public bug bounty, treat that as
+    strong evidence the protocol has been audited.
+
+    Rationale: Immunefi (and HackerOne for crypto) require audit reports as
+    part of program onboarding for any meaningful payout cap. A $1M bounty
+    on Immunefi means the team has been through audit due diligence — even
+    if their audit reports are hosted on private docs sites that our
+    scanner can't reach (Trail of Bits / Halborn / Zellic / ChainSecurity
+    typically deliver PDFs hosted by the protocol, not in github).
+
+    BATCH I.2 fix: closes the false-negative class where Hyperlane, Synapse,
+    and similar protocols showed audit_density_score=0 because their
+    private audits aren't in DefiLlama, GitHub `audits/` folders, or any
+    contest org. Previously they ranked at the top of the under-audited
+    list which was wrong — they're audited, just not by sources we index.
+
+    Weight is 4 (single source) which:
+      - raises total above the under_audited threshold (>2)
+      - drops audit_gap_score by 8 points (max(0, 10 - 2*4) = 2)
+      - drops priority score by 8 * 0.30 = 2.4 points
+    Net effect: bounty-having protocols leave the top of the report and
+    truly-fresh / truly-unindexed protocols rise.
+    """
+    if candidate.bounty_program == "none":
+        return []
+    if (
+        candidate.bounty_max_payout_usd is None
+        or candidate.bounty_max_payout_usd < BOUNTY_TRUST_MIN_PAYOUT_USD
+    ):
+        return []
+
+    title = (
+        f"Trusted via {candidate.bounty_program} bounty "
+        f"(max ${candidate.bounty_max_payout_usd:,}) — bounty platforms "
+        f"vet protocols against audit reports during onboarding"
+    )
+    return [
+        AuditSource(
+            source=AuditSourceKind.BOUNTY_TRUST,
+            url=candidate.bounty_url,
+            title=title,
+            weight=BOUNTY_TRUST_WEIGHT,
+        )
+    ]
+
+
 def compute_score(
     candidate: EnrichedCandidate,
     *,
@@ -119,6 +174,7 @@ def compute_score(
     all_sources: list[AuditSource] = []
     all_sources.extend(_defillama_sources(candidate))
     all_sources.extend(_github_folder_source(candidate))
+    all_sources.extend(_bounty_trust_source(candidate))
     all_sources.extend(contest_sources)
 
     total_score = sum(src.weight for src in all_sources)

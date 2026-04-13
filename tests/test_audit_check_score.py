@@ -187,6 +187,68 @@ def test_compute_score_defillama_count_zero_leaves_under_audited_true() -> None:
     assert result.audit_density_score == 0
 
 
+def test_bounty_trust_source_fires_for_immunefi_with_substantial_payout() -> None:
+    """Batch I.2: a candidate with an Immunefi bounty $100K+ should get a
+    BOUNTY_TRUST audit source automatically.
+    """
+    from tvl_scanner.audit_check.score import _bounty_trust_source
+
+    candidate = _enriched()
+    candidate = candidate.model_copy(
+        update={
+            "bounty_program": "immunefi",
+            "bounty_url": "https://immunefi.com/bounty/hyperlane/",
+            "bounty_max_payout_usd": 2_500_000,
+        }
+    )
+    sources = _bounty_trust_source(candidate)
+    assert len(sources) == 1
+    assert sources[0].source == AuditSourceKind.BOUNTY_TRUST
+    assert sources[0].weight == 4
+    assert "immunefi" in (sources[0].title or "")
+    assert "2,500,000" in (sources[0].title or "")
+
+
+def test_bounty_trust_source_skips_low_payout() -> None:
+    """A bounty below $100K is too small to imply professional audit due diligence."""
+    from tvl_scanner.audit_check.score import _bounty_trust_source
+
+    candidate = _enriched().model_copy(
+        update={
+            "bounty_program": "immunefi",
+            "bounty_url": "https://immunefi.com/bounty/small/",
+            "bounty_max_payout_usd": 50_000,
+        }
+    )
+    assert _bounty_trust_source(candidate) == []
+
+
+def test_bounty_trust_source_skips_no_bounty() -> None:
+    """A candidate with no bounty program should not get a phantom trust source."""
+    from tvl_scanner.audit_check.score import _bounty_trust_source
+
+    candidate = _enriched()
+    assert _bounty_trust_source(candidate) == []
+
+
+def test_compute_score_bounty_trust_pushes_above_threshold() -> None:
+    """Hyperlane case: 0 audits in DL/github/contest, but Immunefi bounty $2.5M
+    → BOUNTY_TRUST source contributes weight 4 → under_audited=False.
+    """
+    candidate = _enriched().model_copy(
+        update={
+            "bounty_program": "immunefi",
+            "bounty_url": "https://immunefi.com/bounty/hyperlane/",
+            "bounty_max_payout_usd": 2_500_000,
+        }
+    )
+    result = compute_score(candidate, contest_sources=[])
+    assert result.audit_density_score == 4  # bounty trust source = 4 pts
+    assert result.under_audited is False
+    # The synthetic source should be in the sources list for transparency
+    assert any(s.source == "bounty_trust" for s in result.audit_sources_found)
+
+
 def test_compute_score_defillama_count_one_does_not_override() -> None:
     """audit_count=1 is below the override threshold of 2 (single audit is weak signal)."""
     import datetime
