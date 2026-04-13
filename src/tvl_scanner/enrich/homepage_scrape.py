@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
 
@@ -156,3 +157,202 @@ async def scrape_homepage(
         wrapper_matches=sorted(wrapper_hits),
         audit_firm_matches=sorted(audit_hits),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BATCH K2: multi-URL fallback for protocols whose DefiLlama url is wrong
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# Common protocol-name suffixes to strip when slug-ifying a display name.
+# "SoDEX Bridge" → "sodex", "Pendle Finance" → "pendle", "Aave Protocol" → "aave"
+_DISPLAY_NAME_SUFFIXES = {
+    "bridge",
+    "protocol",
+    "finance",
+    "dao",
+    "network",
+    "labs",
+    "foundation",
+    "exchange",
+    "swap",
+    "v1",
+    "v2",
+    "v3",
+    "v4",
+}
+
+
+# Common TLDs to try when deriving a domain from a slug.
+_CANDIDATE_TLDS = ("com", "xyz", "io", "fi", "finance", "network", "app", "org")
+
+
+# Common security/audit URL paths to try on each candidate domain.
+# Ordered by likelihood of containing audit firm names.
+_AUDIT_PATHS = (
+    "/security",
+    "/audits",
+    "/security/audits",
+    "/documentation/security",
+    "/documentation/audits",
+)
+
+
+def _slugify_display_name(display_name: str) -> str | None:
+    """Convert a display name to a slug suitable for domain derivation.
+
+    Examples:
+        "SoDEX Bridge" → "sodex"
+        "Pendle Finance" → "pendle"
+        "Aave V3" → "aave"
+        "Spark Savings" → "spark"
+        "" → None
+    """
+    if not display_name:
+        return None
+    # Lowercase and split on whitespace + punctuation
+    tokens = re.split(r"[^a-z0-9]+", display_name.lower())
+    # Drop empty tokens and known suffix words
+    tokens = [t for t in tokens if t and t not in _DISPLAY_NAME_SUFFIXES]
+    if not tokens:
+        return None
+    # Prefer the first remaining token (the brand name usually leads)
+    # over single-character or all-digit tokens
+    for t in tokens:
+        if len(t) >= 2 and not t.isdigit():
+            return t
+    return None
+
+
+def derive_candidate_urls(
+    display_name: str | None, base_url: str | None
+) -> list[str]:
+    """Generate a list of candidate URLs to try for audit-firm scraping.
+
+    Strategy (priority-ordered):
+      1. The base_url itself (DefiLlama's `url` field), if any.
+      2. Slug × .com × audit paths. Highest signal: when the input URL is
+         wrong, the brand's `.com` is usually right (this catches the SoDEX
+         case where DefiLlama returned a SosoValue invite link).
+      3. The base_url's domain root + audit paths (subdomain stripped).
+         Lower priority because when the input URL is wrong, the parent
+         company domain is also likely wrong.
+      4. Slug × other TLDs × audit paths (least-likely fallback).
+
+    Returns a deduped, ordered list. Capped at ~15 entries to bound HTTP cost.
+    """
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(url: str) -> None:
+        if url and url not in seen:
+            seen.add(url)
+            candidates.append(url)
+
+    # 1. The base URL itself (if valid)
+    if base_url and isinstance(base_url, str) and base_url.startswith("http"):
+        add(base_url)
+
+    # 2. Slug × .com × audit paths (highest-signal derived candidates)
+    slug = _slugify_display_name(display_name or "")
+    if slug:
+        primary_domain = f"https://{slug}.com"
+        add(primary_domain)
+        for path in _AUDIT_PATHS:
+            add(primary_domain + path)
+
+    # 3. Base URL's domain root + audit paths (subdomain stripped)
+    if base_url and isinstance(base_url, str) and base_url.startswith("http"):
+        try:
+            parsed = urlparse(base_url)
+            if parsed.scheme and parsed.netloc:
+                netloc = parsed.netloc.lower()
+                root_netloc = netloc
+                parts = netloc.split(".")
+                if len(parts) >= 3 and parts[0] in (
+                    "docs",
+                    "app",
+                    "ssi",
+                    "invite",
+                    "share",
+                    "www",
+                    "go",
+                    "link",
+                ):
+                    root_netloc = ".".join(parts[1:])
+
+                root_base = f"{parsed.scheme}://{root_netloc}"
+                add(root_base)
+                for path in _AUDIT_PATHS:
+                    add(root_base + path)
+        except (ValueError, AttributeError):
+            pass
+
+    # 4. Slug × other TLDs × audit paths (least-likely fallback)
+    if slug:
+        for tld in _CANDIDATE_TLDS:
+            if tld == "com":
+                continue  # already added in step 2
+            domain_base = f"https://{slug}.{tld}"
+            add(domain_base)
+            for path in _AUDIT_PATHS:
+                add(domain_base + path)
+                if len(candidates) >= 15:
+                    break
+            if len(candidates) >= 15:
+                break
+
+    return candidates[:15]
+
+
+async def scrape_homepage_with_fallback(
+    base_url: str | None,
+    display_name: str | None,
+    *,
+    client: httpx.AsyncClient | None = None,
+    max_attempts: int = 6,
+) -> HomepageScrapeResult:
+    """Two-phase homepage scrape with derived URL fallback.
+
+    Phase 1: try the base_url. If it returns successfully AND found at least
+    one wrapper or audit firm match, return immediately — single URL was
+    sufficient.
+
+    Phase 2: try derived candidate URLs in order, stopping on the first
+    successful fetch that yields any wrapper or audit firm match. Caps at
+    `max_attempts` HTTP requests total (Phase 1 + Phase 2 combined).
+
+    Returns the BEST result found across all attempts (the URL that
+    produced the most/strongest matches), or an empty result if nothing
+    succeeded.
+    """
+    # Phase 1
+    primary = await scrape_homepage(base_url, client=client)
+    if primary.fetched and (primary.wrapper_matches or primary.audit_firm_matches):
+        return primary
+
+    # Phase 2: try derived URLs
+    derived = derive_candidate_urls(display_name, base_url)
+    # Skip the base_url since we just tried it
+    if base_url in derived:
+        derived = [u for u in derived if u != base_url]
+
+    best_result = primary  # baseline; updated if a derived URL beats it
+    attempts_made = 1  # Phase 1 counts as 1
+    for candidate in derived:
+        if attempts_made >= max_attempts:
+            break
+        attempts_made += 1
+        result = await scrape_homepage(candidate, client=client)
+        if result.fetched and (result.wrapper_matches or result.audit_firm_matches):
+            log.info(
+                "homepage_scrape K2 fallback: derived URL %s succeeded for %r "
+                "(wrapper=%s audit=%s)",
+                candidate,
+                display_name,
+                result.wrapper_matches,
+                result.audit_firm_matches,
+            )
+            return result
+
+    return best_result

@@ -29,7 +29,7 @@ from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.evm_bytecode_check import check_bytecode_match
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
-from tvl_scanner.enrich.homepage_scrape import scrape_homepage
+from tvl_scanner.enrich.homepage_scrape import scrape_homepage_with_fallback
 from tvl_scanner.enrich.ottersec import check_ottersec_verification
 from tvl_scanner.http import make_client
 from tvl_scanner.models import (
@@ -232,17 +232,23 @@ async def enrich_one(
                 )
             )
 
-    # BATCH K: homepage scrape for pool-based candidates. The url comes from
-    # the DefiLlama match (if any).
+    # BATCH K + K2: homepage scrape with multi-URL fallback for pool-based
+    # candidates. Phase 1 tries the DefiLlama url; Phase 2 derives candidate
+    # URLs from the protocol display_name when Phase 1 returns empty.
     if dl_match:
-        homepage_url = dl_match.get("url")
-        if isinstance(homepage_url, str):
-            scrape = await scrape_homepage(homepage_url, client=client)
+        homepage_url = dl_match.get("url") if isinstance(dl_match.get("url"), str) else None
+        display_name_for_scrape = _display_name(contract, dl_match)
+        if homepage_url or display_name_for_scrape:
+            scrape = await scrape_homepage_with_fallback(
+                homepage_url, display_name_for_scrape, client=client
+            )
+            scrape_url_str = scrape.url or homepage_url
+            url_for_source = scrape_url_str if isinstance(scrape_url_str, str) and scrape_url_str.startswith("http") else None
             for firm in scrape.audit_firm_matches:
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=homepage_url,  # type: ignore[arg-type]
+                        url=url_for_source,  # type: ignore[arg-type]
                         title=f"{firm} audit cited on protocol homepage",
                         weight=4,
                     )
@@ -251,7 +257,7 @@ async def enrich_one(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=homepage_url,  # type: ignore[arg-type]
+                        url=url_for_source,  # type: ignore[arg-type]
                         title=f"Wrapper of {wrapper_tag} (cited on homepage)",
                         weight=4,
                     )

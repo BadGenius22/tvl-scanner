@@ -33,7 +33,7 @@ from tvl_scanner.config import settings
 from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.github import enrich_repo
-from tvl_scanner.enrich.homepage_scrape import scrape_homepage
+from tvl_scanner.enrich.homepage_scrape import scrape_homepage_with_fallback
 from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.enrich.solana_wrapper_check import (
     WrapperMatch,
@@ -331,17 +331,25 @@ async def _process_protocol(
                     )
                     tvl = actual_tvl_usd
 
-        # BATCH K: homepage scrape — fetch the protocol's url and regex for
-        # known wrapper phrases and audit firm mentions. Catches Hyperlane-
-        # class private-firm audits that DefiLlama and GitHub orgs miss.
+        # BATCH K + K2: homepage scrape with multi-URL fallback. Phase 1 tries
+        # DefiLlama's `url` field; Phase 2 derives candidate URLs from the
+        # display_name when Phase 1 returns empty. Catches the SoDEX case
+        # where DefiLlama's url was a SosoValue invite link instead of the
+        # actual sodex.com docs.
         homepage_url = protocol.get("url") or (detail.get("url") if detail else None)
-        if isinstance(homepage_url, str):
-            scrape = await scrape_homepage(homepage_url, client=client)
+        if isinstance(homepage_url, str) or name:
+            scrape = await scrape_homepage_with_fallback(
+                homepage_url if isinstance(homepage_url, str) else None,
+                name,
+                client=client,
+            )
+            scrape_url_str = scrape.url or homepage_url  # use the URL that actually worked
+            url_for_source = scrape_url_str if isinstance(scrape_url_str, str) and scrape_url_str.startswith("http") else None
             for firm in scrape.audit_firm_matches:
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=homepage_url,  # type: ignore[arg-type]
+                        url=url_for_source,  # type: ignore[arg-type]
                         title=f"{firm} audit cited on protocol homepage",
                         weight=4,
                     )
@@ -350,7 +358,7 @@ async def _process_protocol(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=homepage_url,  # type: ignore[arg-type]
+                        url=url_for_source,  # type: ignore[arg-type]
                         title=f"Wrapper of {wrapper_tag} (cited on homepage)",
                         weight=4,
                     )

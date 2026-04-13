@@ -153,6 +153,84 @@ classes of false positives in the v0.4.1 top 20.
 
 ---
 
+## Batch K2 — Multi-URL homepage scrape with derived docs URLs ★ shipped after SoDEX recon
+
+**Discovery context**: the SosoValue SSI Protocol recon (vault target
+`sosovalue-ssi-protocol`) showed Batch K's homepage scrape would have
+caught the Halborn audit signal automatically — but only if it scraped
+the right URL. DefiLlama's `url` field for the `sodex-bridge` slug
+points to a SosoValue *invite link* (`ssi.sosovalue.com/share/...`),
+NOT the actual SoDEX docs at `sodex.com/documentation/custody-and-security/audits`.
+The scanner scraped the invite page (no audit text) and missed Halborn.
+
+This is a structural blind spot for Batch K: when the DefiLlama `url`
+field is wrong (invite link, marketing redirect, expired domain), the
+single-URL scrape can't recover.
+
+### Fix design
+
+Two-phase fallback:
+
+1. **Phase 1**: try the DefiLlama `url` as before. If we got a successful
+   200 response AND found at least one wrapper or audit firm match,
+   return — single URL was sufficient.
+2. **Phase 2** (only fires when Phase 1 returns empty): derive candidate
+   URLs from the protocol's display_name and try each in order, stopping
+   on the first useful hit.
+
+### URL derivation strategy
+
+Given display_name like `"SoDEX Bridge"`:
+
+1. Slug-ify: strip suffixes (`Bridge`, `Protocol`, `Finance`, `DAO`,
+   `Network`, `Labs`, `Foundation`), lowercase, kebab-case
+   → `sodex`
+2. Generate domain candidates: `{slug}.{tld}` for tlds in
+   `(com, xyz, io, fi, finance, network, app, org)` → 8 domains
+3. For each domain, try ~6 common audit/security paths:
+   - `/`
+   - `/audits`
+   - `/security`
+   - `/security/audits`
+   - `/documentation/audits`
+   - `/documentation/security`
+4. Cap total candidates at ~10 per protocol to bound cost
+
+For SoDEX specifically: `sodex.com/documentation/security` would be the
+closest match to `sodex.com/documentation/custody-and-security/audits`.
+The exact custody-and-security path is too specific to derive
+generically, but `/documentation/security` is a common-enough pattern
+that we'd at least get the right docs domain and could rely on Phase 1
+of the regex catching audit firms anywhere on a docs page.
+
+### Implementation files
+
+- Modify: `src/tvl_scanner/enrich/homepage_scrape.py` — new
+  `derive_candidate_urls(display_name, base_url)` helper, new
+  `scrape_homepage_with_fallback(url, display_name)` orchestrator
+- Modify: `src/tvl_scanner/enrich/defillama_protocols.py` `_process_protocol`
+  to call the fallback variant
+- Modify: `src/tvl_scanner/enrich/enricher.py` `enrich_one` same
+- New tests in `tests/test_enrich_homepage_scrape.py`
+
+### Cost
+
+Phase 1 unchanged (1 fetch per candidate). Phase 2 fires only when
+Phase 1 returns empty. At most ~5 additional fetches per empty
+candidate. For a typical scan with ~145 catalog candidates, ~80% will
+have a working DefiLlama URL → Phase 1 succeeds → no Phase 2 cost.
+The ~20% that fail Phase 1 trigger Phase 2 → ~30 candidates × 5 fetches
+= 150 extra fetches. Total scan time impact: maybe +30-60 seconds.
+
+### Catches
+
+Hyperlane (their docs at `docs.hyperlane.xyz/security` is reachable via
+the slug derivation), SoDEX (their `sodex.com/documentation/security`
+is reachable), and any other protocol where DefiLlama's `url` field is
+a marketing redirect / invite link / expired domain.
+
+---
+
 ## Batch K — Protocol homepage scraping ★ medium ROI
 
 For top-N candidates after Batch J/K filtering (default N=30), fetch the
