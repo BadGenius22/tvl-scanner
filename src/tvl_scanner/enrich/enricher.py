@@ -138,11 +138,19 @@ async def enrich_one(
     dl_audit_note: str | None = None
     dl_slug: str | None = None
     if dl_match:
+        # BATCH I fix #1.1: DefiLlama sometimes returns `github=['bareorgname']`
+        # which looks like a URL but isn't parseable. Require "github.com" in
+        # the candidate to accept it, else fall through to the URL field and
+        # then the github_registry seed file.
         github_field = dl_match.get("github")
+        candidate = None
         if isinstance(github_field, list) and github_field:
-            github_url = str(github_field[0])
+            candidate = str(github_field[0])
         elif isinstance(github_field, str):
-            github_url = github_field
+            candidate = github_field
+        if candidate and "github.com" in candidate:
+            github_url = candidate
+
         # Some DefiLlama entries nest github under `url` — try that if nothing else
         if not github_url:
             url_field = dl_match.get("url")
@@ -161,13 +169,17 @@ async def enrich_one(
                 note_raw = detail.get("audit_note")
                 if isinstance(note_raw, str) and note_raw.strip():
                     dl_audit_note = note_raw.strip()
-                # Also try to extract github URL from detail if flat was empty
+                # Also try to extract github URL from detail if flat was empty.
+                # Same bare-org-name guard as above.
                 if not github_url:
                     detail_gh = detail.get("github")
+                    detail_candidate = None
                     if isinstance(detail_gh, list) and detail_gh:
-                        github_url = str(detail_gh[0])
+                        detail_candidate = str(detail_gh[0])
                     elif isinstance(detail_gh, str):
-                        github_url = detail_gh
+                        detail_candidate = detail_gh
+                    if detail_candidate and "github.com" in detail_candidate:
+                        github_url = detail_candidate
             # Fallback to the flat catalog's `audits` field if detail didn't help
             if dl_audit_count is None:
                 dl_audit_count = _coerce_audit_count(dl_match.get("audits"))

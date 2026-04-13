@@ -59,13 +59,13 @@
   github: https://github.com/makerdao/dss
 
 - slug: spark
-  github: https://github.com/marsfoundation/spark
+  github: https://github.com/sparkdotfi/sparklend-deployments
 - slug: spark-savings
-  github: https://github.com/marsfoundation/spark
+  github: https://github.com/sparkdotfi/spark-psm
 - slug: spark-protocol
-  github: https://github.com/marsfoundation/spark
+  github: https://github.com/sparkdotfi/sparklend-deployments
 - slug: sparklend
-  github: https://github.com/marsfoundation/spark-lend-deployments
+  github: https://github.com/sparkdotfi/sparklend-deployments
 
 - slug: silo
   github: https://github.com/silo-finance/silo-contracts-v2

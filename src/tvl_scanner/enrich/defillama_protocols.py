@@ -124,11 +124,28 @@ def _pick_primary_chain(
 
 
 def _extract_github_url(protocol: dict[str, Any]) -> str | None:
+    """Extract a fully-qualified github URL from a DefiLlama protocol entry.
+
+    DefiLlama is inconsistent: some entries have `github=[]` (empty list), some
+    have `github=['https://github.com/foo/bar']` (real URL), and some have
+    `github=['foo']` (BARE ORG NAME ONLY, unusable — cannot be turned into a
+    repo URL without guessing the repo name). We reject the bare-org case so
+    that callers fall through to the github_registry fallback, which has
+    curated owner/repo pairs that actually point at real repos.
+    """
     gh = protocol.get("github")
+    candidate: str | None = None
     if isinstance(gh, list) and gh:
-        return str(gh[0])
-    if isinstance(gh, str):
-        return gh
+        candidate = str(gh[0])
+    elif isinstance(gh, str):
+        candidate = gh
+
+    # Must contain "github.com" to be a full URL we can parse. Bare org names
+    # like "synapsecns" look non-None but can't be enriched, so we force a
+    # fallthrough to the registry where curated repo paths live.
+    if candidate and "github.com" in candidate:
+        return candidate
+
     url = protocol.get("url")
     if isinstance(url, str) and "github.com" in url:
         return url
