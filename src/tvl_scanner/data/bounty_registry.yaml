@@ -1,0 +1,195 @@
+# Curated bounty program registry.
+#
+# Each entry is a known public bug bounty program. The scanner uses this as
+# the seeds list — a candidate is tagged with bounty_program=<platform> if its
+# display_name or defillama_slug matches any of the `slugs` entries (case-
+# insensitive, exact match).
+#
+# Add new entries as you discover them — it's a text file, commit freely.
+#
+# Fields:
+#   name          — canonical protocol name (human readable)
+#   slugs         — list of match keys (lowercase slugs, protocol names, aliases)
+#   platform      — immunefi | hackerone | hackenproof | cantina | selfhosted
+#   url           — direct URL to the bounty listing
+#   max_payout_usd — maximum single finding payout (USD). null if unspecified.
+
+- name: Aave
+  slugs: [aave, aave-v2, aave-v3, aave-v4]
+  platform: immunefi
+  url: https://immunefi.com/bounty/aave/
+  max_payout_usd: 1000000
+
+- name: Compound
+  slugs: [compound, compound-v3, compound-finance, compound-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/compoundfinance/
+  max_payout_usd: 500000
+
+- name: MakerDAO
+  slugs: [makerdao, maker, sky, sky-money]
+  platform: immunefi
+  url: https://immunefi.com/bounty/makerdao/
+  max_payout_usd: 2500000
+
+- name: Uniswap
+  slugs: [uniswap, uniswap-v2, uniswap-v3, uniswap-v4]
+  platform: cantina
+  url: https://cantina.xyz/competitions/uniswap
+  max_payout_usd: 2250000
+
+- name: Curve Finance
+  slugs: [curve, curve-finance, curve-dex, curve-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/curve/
+  max_payout_usd: 250000
+
+- name: Balancer
+  slugs: [balancer, balancer-v2, balancer-v3]
+  platform: immunefi
+  url: https://immunefi.com/bounty/balancer/
+  max_payout_usd: 1000000
+
+- name: Pendle
+  slugs: [pendle, pendle-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/pendle/
+  max_payout_usd: 250000
+
+- name: Silo Finance
+  slugs: [silo, silo-finance, silo-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/silofinance/
+  max_payout_usd: 1000000
+
+- name: Morpho
+  slugs: [morpho, morpho-blue, morpho-aave-v3]
+  platform: cantina
+  url: https://cantina.xyz/competitions/morpho
+  max_payout_usd: 2500000
+
+- name: Euler
+  slugs: [euler, euler-finance, euler-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/eulerfinance/
+  max_payout_usd: 1000000
+
+- name: GMX
+  slugs: [gmx, gmx-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/gmx/
+  max_payout_usd: 5000000
+
+- name: Gearbox
+  slugs: [gearbox, gearbox-protocol, gearbox-v3]
+  platform: immunefi
+  url: https://immunefi.com/bounty/gearboxprotocol/
+  max_payout_usd: 1000000
+
+- name: Chainlink
+  slugs: [chainlink, ccip, chainlink-ccip]
+  platform: immunefi
+  url: https://immunefi.com/bounty/chainlink/
+  max_payout_usd: 5000000
+
+- name: Lido
+  slugs: [lido, lido-finance]
+  platform: immunefi
+  url: https://immunefi.com/bounty/lido/
+  max_payout_usd: 2000000
+
+- name: Rocket Pool
+  slugs: [rocket-pool, rocketpool, rpl]
+  platform: immunefi
+  url: https://immunefi.com/bounty/rocketpool/
+  max_payout_usd: 500000
+
+- name: Synthetix
+  slugs: [synthetix, synthetix-v2, synthetix-v3]
+  platform: immunefi
+  url: https://immunefi.com/bounty/synthetix/
+  max_payout_usd: 500000
+
+- name: Camelot
+  slugs: [camelot, camelot-v3, camelot-labs]
+  platform: immunefi
+  url: https://immunefi.com/bounty/camelot/
+  max_payout_usd: 250000
+
+- name: Frax Finance
+  slugs: [frax, frax-finance, fraxswap, frxETH]
+  platform: immunefi
+  url: https://immunefi.com/bounty/fraxfinance/
+  max_payout_usd: 1000000
+
+- name: Velodrome
+  slugs: [velodrome, velodrome-v2, velodrome-finance]
+  platform: immunefi
+  url: https://immunefi.com/bounty/velodromefinance/
+  max_payout_usd: 500000
+
+- name: Jito
+  slugs: [jito, jito-sol, jitosol]
+  platform: immunefi
+  url: https://immunefi.com/bounty/jito/
+  max_payout_usd: 1000000
+
+- name: Marinade
+  slugs: [marinade, marinade-finance, msol]
+  platform: immunefi
+  url: https://immunefi.com/bounty/marinade/
+  max_payout_usd: 250000
+
+- name: Kamino Finance
+  slugs: [kamino, kamino-finance, kamino-lend]
+  platform: immunefi
+  url: https://immunefi.com/bounty/kaminofinance/
+  max_payout_usd: 500000
+
+- name: Drift
+  slugs: [drift, drift-protocol, drift-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/drift/
+  max_payout_usd: 500000
+
+- name: Mango Markets
+  slugs: [mango, mango-markets, mango-v4]
+  platform: immunefi
+  url: https://immunefi.com/bounty/mangomarkets/
+  max_payout_usd: 500000
+
+- name: Jupiter
+  slugs: [jupiter, jupiter-exchange, jup]
+  platform: immunefi
+  url: https://immunefi.com/bounty/jupiter/
+  max_payout_usd: 500000
+
+- name: Raydium
+  slugs: [raydium, raydium-amm, raydium-clmm]
+  platform: immunefi
+  url: https://immunefi.com/bounty/raydium/
+  max_payout_usd: 505500
+
+- name: Orca
+  slugs: [orca, orca-whirlpools, orca-so]
+  platform: immunefi
+  url: https://immunefi.com/bounty/orca/
+  max_payout_usd: 100000
+
+- name: LayerZero
+  slugs: [layerzero, layerzero-v2, stargate]
+  platform: immunefi
+  url: https://immunefi.com/bounty/layerzero/
+  max_payout_usd: 15000000
+
+- name: Wormhole
+  slugs: [wormhole, portal, wormhole-bridge]
+  platform: immunefi
+  url: https://immunefi.com/bounty/wormhole/
+  max_payout_usd: 5000000
+
+- name: Polygon
+  slugs: [polygon, polygon-pos, polygon-zkevm]
+  platform: immunefi
+  url: https://immunefi.com/bounty/polygon/
+  max_payout_usd: 2500000

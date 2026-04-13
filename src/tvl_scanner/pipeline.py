@@ -20,12 +20,36 @@ from pathlib import Path
 
 from tvl_scanner.audit_check.checker import check_all, write_audit_status
 from tvl_scanner.discover.merge import discover_all, write_candidates
+from tvl_scanner.enrich.defillama_protocols import discover_from_defillama_catalog
 from tvl_scanner.enrich.enricher import enrich_all, write_enriched
-from tvl_scanner.models import Chain
+from tvl_scanner.http import make_client
+from tvl_scanner.models import Chain, EnrichedCandidate
 from tvl_scanner.rank.priority import rank_all
 from tvl_scanner.rank.report import write_report
 
 log = logging.getLogger(__name__)
+
+
+def _dedupe_enriched(candidates: list[EnrichedCandidate]) -> list[EnrichedCandidate]:
+    """Deduplicate the merged enriched list.
+
+    A protocol can appear from TWO sources: as a pool on GeckoTerminal/Birdeye
+    (Stage 1 path) and as a direct entry in the DefiLlama catalog (Stage 2 path).
+    When both match the same defillama_slug, prefer the DefiLlama catalog
+    record because it's protocol-level (higher TVL, proper category) while the
+    pool record is just one of the protocol's pools.
+    """
+    by_slug: dict[str, EnrichedCandidate] = {}
+    no_slug: list[EnrichedCandidate] = []
+    for c in candidates:
+        if c.defillama_slug:
+            prev = by_slug.get(c.defillama_slug)
+            # Keep the one with larger TVL (catalog TVL is usually higher)
+            if prev is None or c.tvl_usd > prev.tvl_usd:
+                by_slug[c.defillama_slug] = c
+        else:
+            no_slug.append(c)
+    return list(by_slug.values()) + no_slug
 
 
 async def run_pipeline(
@@ -35,21 +59,41 @@ async def run_pipeline(
     cutoff: float = 5.0,
     cap: int = 50,
 ) -> Path:
-    """Run the full four-stage pipeline. Returns the summary report path."""
+    """Run the full pipeline. Two parallel discovery paths (address-based pools
+    and protocol-level catalog) feed into unified enrichment and ranking.
+    """
     scan_date = scan_date or date.today()
 
-    log.info("=== Stage 1: Discover ===")
+    log.info("=== Stage 1: Discover (pool-based) ===")
     discovered = await discover_all(chains, scan_date=scan_date)
     write_candidates(discovered)
-    log.info("discovered %d candidates above threshold", len(discovered))
-    if not discovered:
-        log.warning("no candidates discovered — nothing to do")
+    log.info("discovered %d pool-based candidates above threshold", len(discovered))
+
+    log.info("=== Stage 1.5: DefiLlama catalog discovery ===")
+    async with make_client() as client:
+        catalog_enriched = await discover_from_defillama_catalog(
+            scan_date=scan_date, client=client
+        )
+    log.info("discovered %d catalog-based candidates", len(catalog_enriched))
+
+    if not discovered and not catalog_enriched:
+        log.warning("no candidates from any source — nothing to do")
         return Path("/dev/null")
 
-    log.info("=== Stage 2: Enrich ===")
-    enriched = await enrich_all(discovered)
+    log.info("=== Stage 2: Enrich pool-based candidates ===")
+    pool_enriched = await enrich_all(discovered) if discovered else []
+    log.info("enriched %d pool-based candidates", len(pool_enriched))
+
+    # Merge and dedupe
+    enriched = _dedupe_enriched(pool_enriched + catalog_enriched)
     write_enriched(enriched)
-    log.info("enriched %d candidates", len(enriched))
+    log.info(
+        "combined enriched candidates: %d (pool=%d + catalog=%d, deduped from %d)",
+        len(enriched),
+        len(pool_enriched),
+        len(catalog_enriched),
+        len(pool_enriched) + len(catalog_enriched),
+    )
 
     log.info("=== Stage 3: Audit-check ===")
     audited = await check_all(enriched)

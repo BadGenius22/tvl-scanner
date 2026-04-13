@@ -39,6 +39,7 @@ class Language(str, Enum):
 class DiscoverySource(str, Enum):
     GECKOTERMINAL = "geckoterminal"
     BIRDEYE = "birdeye"
+    DEFILLAMA_CATALOG = "defillama_catalog"
     FACTORY_EVENTS = "factory_events"
     DUNE = "dune"
     FLIPSIDE = "flipside"

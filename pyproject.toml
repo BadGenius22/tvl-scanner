@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tvl-scanner"
-version = "0.1.0"
+version = "0.2.0"
 description = "TVL-weighted attack surface scanner for under-audited smart contract protocols"
 requires-python = ">=3.11"
 authors = [{name = "Dewangga Praxindo", email = "dewa.xindo@gmail.com"}]
@@ -36,6 +36,9 @@ tvl-scanner = "tvl_scanner.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+tvl_scanner = ["data/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

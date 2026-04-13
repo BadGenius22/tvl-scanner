@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from tvl_scanner.config import settings
+from tvl_scanner.enrich import bounty
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
 from tvl_scanner.http import make_client
@@ -139,6 +140,17 @@ async def enrich_one(
 
     languages = _derive_languages(contract.chain, repo_metadata)
 
+    # Bounty registry lookup (seeds file) — upgrades bounty_program from "none"
+    # if the candidate matches a known public bounty.
+    bounty_entry = bounty.match(
+        display_name=_display_name(contract, dl_match),
+        defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
+        target_name=_target_slug(contract, dl_match),
+    )
+    bounty_program = bounty_entry.platform if bounty_entry else "none"
+    bounty_url_raw = bounty_entry.url if bounty_entry else None
+    bounty_payout = bounty_entry.max_payout_usd if bounty_entry else None
+
     return EnrichedCandidate(
         chain=contract.chain,
         address=contract.address,
@@ -152,10 +164,10 @@ async def enrich_one(
         languages=languages,
         github_repo=repo_metadata.url if repo_metadata and repo_metadata.exists else None,
         loc_estimate=repo_metadata.loc_estimate if repo_metadata else None,
-        docs_url=None,  # v1: docs discovery deferred to v2
-        bounty_program="none",  # v1: bounty lookup deferred to v2
-        bounty_url=None,
-        bounty_max_payout_usd=None,
+        docs_url=None,  # v1: docs discovery deferred to a later batch
+        bounty_program=bounty_program,  # type: ignore[arg-type]
+        bounty_url=bounty_url_raw,  # type: ignore[arg-type]
+        bounty_max_payout_usd=bounty_payout,
         defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
         defillama_audit_links=_audit_links(dl_match),
         github_audits_folder_exists=bool(
