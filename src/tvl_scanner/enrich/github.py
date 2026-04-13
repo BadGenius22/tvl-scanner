@@ -1,0 +1,164 @@
+"""GitHub repository metadata enrichment.
+
+Given a repo URL (from DefiLlama or heuristic discovery), query the GitHub
+REST API for:
+    - exists (is the repo still alive?)
+    - default branch
+    - languages + byte counts (proxy for LOC estimate)
+    - whether an `audits/` folder exists at the repo root (signal for Stage 3)
+
+Uses the fine-grained PAT stored in `pass` under `tvl-scanner/github`.
+Rate limit with authenticated requests: 5000/hour, well above our scanner's
+needs (a few hundred per run).
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+
+from tvl_scanner.config import get_secret, settings
+from tvl_scanner.http import get_json, HttpError
+
+log = logging.getLogger(__name__)
+
+
+# Match github.com owner/repo from any URL form, including trailing /tree/main etc.
+_GH_URL = re.compile(
+    r"github\.com[:/]([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?(?:/.*)?$"
+)
+
+
+# Byte-per-LOC heuristic per language. Rough averages; only used for relative
+# sizing of audit scope so exact accuracy is unimportant.
+_BYTES_PER_LOC = {
+    "Solidity": 30,
+    "Rust": 28,
+    "Move": 30,
+    "Cairo": 30,
+    "Vyper": 32,
+    "TypeScript": 30,
+    "JavaScript": 30,
+}
+
+
+@dataclass
+class RepoMetadata:
+    """Structured result from GitHub enrichment."""
+
+    owner: str
+    repo: str
+    url: str
+    exists: bool
+    default_branch: str | None = None
+    loc_estimate: int | None = None
+    audits_folder_exists: bool = False
+    languages: dict[str, int] | None = None
+
+
+def parse_github_url(url: str | None) -> tuple[str, str] | None:
+    """Extract (owner, repo) from a GitHub URL. Returns None if not parseable."""
+    if not url:
+        return None
+    match = _GH_URL.search(url)
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def _auth_headers() -> dict[str, str]:
+    token = get_secret("github", required=False)
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _estimate_loc(languages: dict[str, int]) -> int:
+    """Convert language byte counts to an approximate total LOC.
+
+    Only counts languages that smart-contract auditors care about. Ignores
+    JS/TS deployment scripts, Python tooling, Solidity test files (we can't
+    tell them apart from contracts via the languages endpoint alone).
+    """
+    total = 0
+    for lang, byte_count in languages.items():
+        per_loc = _BYTES_PER_LOC.get(lang)
+        if per_loc:
+            total += int(byte_count / per_loc)
+    return total
+
+
+async def enrich_repo(
+    url: str | None, *, client: httpx.AsyncClient | None = None
+) -> RepoMetadata | None:
+    """Query GitHub for repo metadata. Returns None if the URL is unparseable.
+
+    On HTTP errors for the main `/repos/{owner}/{repo}` call, returns a
+    RepoMetadata with `exists=False`. Side-call failures (languages, audits
+    folder) are swallowed — they shouldn't prevent the main record from being
+    returned.
+    """
+    parsed = parse_github_url(url)
+    if not parsed:
+        return None
+    owner, repo = parsed
+    s = settings()
+    base = f"{s.GITHUB_API_BASE}/repos/{owner}/{repo}"
+    headers = _auth_headers()
+
+    # Main repo lookup
+    try:
+        main: Any = await get_json(base, headers=headers, client=client)
+    except HttpError as exc:
+        log.info("github: repo %s/%s not accessible (%s)", owner, repo, exc)
+        return RepoMetadata(owner=owner, repo=repo, url=url or "", exists=False)
+
+    if not isinstance(main, dict):
+        return RepoMetadata(owner=owner, repo=repo, url=url or "", exists=False)
+
+    default_branch = main.get("default_branch")
+
+    # Languages side-call
+    languages: dict[str, int] | None = None
+    loc_estimate: int | None = None
+    try:
+        langs_payload: Any = await get_json(
+            f"{base}/languages", headers=headers, client=client
+        )
+        if isinstance(langs_payload, dict):
+            languages = {k: int(v) for k, v in langs_payload.items()}
+            loc_estimate = _estimate_loc(languages)
+    except Exception as exc:
+        log.debug("github: languages fetch failed for %s/%s: %s", owner, repo, exc)
+
+    # Audits folder side-call — a 404 is a normal outcome, NOT an error.
+    audits_folder_exists = False
+    try:
+        audits_payload: Any = await get_json(
+            f"{base}/contents/audits", headers=headers, client=client
+        )
+        if isinstance(audits_payload, list) and audits_payload:
+            audits_folder_exists = True
+    except HttpError:
+        audits_folder_exists = False
+    except Exception as exc:
+        log.debug("github: audits folder check failed for %s/%s: %s", owner, repo, exc)
+
+    return RepoMetadata(
+        owner=owner,
+        repo=repo,
+        url=main.get("html_url") or url or f"https://github.com/{owner}/{repo}",
+        exists=True,
+        default_branch=default_branch,
+        loc_estimate=loc_estimate,
+        audits_folder_exists=audits_folder_exists,
+        languages=languages,
+    )

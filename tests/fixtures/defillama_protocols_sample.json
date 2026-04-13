@@ -1,0 +1,45 @@
+[
+  {
+    "id": "1",
+    "name": "Uniswap V3",
+    "slug": "uniswap-v3",
+    "category": "Dexes",
+    "description": "Uniswap V3 is the latest iteration of the Uniswap protocol.",
+    "url": "https://uniswap.org",
+    "github": ["https://github.com/Uniswap/v3-core"],
+    "audit_links": [
+      "https://example.com/uniswap-audit-1.pdf",
+      "https://example.com/uniswap-audit-2.pdf"
+    ],
+    "audits": "2",
+    "audit_note": null,
+    "chains": ["Ethereum", "Arbitrum", "Base"],
+    "tvl": 4200000000
+  },
+  {
+    "id": "2",
+    "name": "Camelot V3",
+    "slug": "camelot-v3",
+    "category": "Dexes",
+    "description": "Camelot V3 is a concentrated liquidity AMM on Arbitrum.",
+    "url": "https://camelot.exchange",
+    "github": ["https://github.com/CamelotLabs/camelot-v3"],
+    "audit_links": ["https://example.com/camelot-audit.pdf"],
+    "audits": "1",
+    "chains": ["Arbitrum"],
+    "tvl": 150000000
+  },
+  {
+    "id": "3",
+    "name": "Factor Finance",
+    "slug": "factor",
+    "category": "Yield",
+    "description": "Factor is a yield aggregator with leverage vaults.",
+    "url": "https://factor.fi",
+    "github": ["https://github.com/FactorDAO/factor-contracts"],
+    "audit_links": [],
+    "audits": "0",
+    "chains": ["Arbitrum"],
+    "tvl": 50000000
+  }
+]

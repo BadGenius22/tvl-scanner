@@ -1,0 +1,13 @@
+{
+  "id": 123456,
+  "name": "camelot-v3",
+  "full_name": "CamelotLabs/camelot-v3",
+  "owner": {"login": "CamelotLabs"},
+  "html_url": "https://github.com/CamelotLabs/camelot-v3",
+  "default_branch": "main",
+  "size": 2500,
+  "stargazers_count": 42,
+  "language": "Solidity",
+  "fork": false,
+  "archived": false
+}
