@@ -26,6 +26,7 @@ from typing import Any
 from tvl_scanner.config import settings
 from tvl_scanner.enrich import bounty
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
+from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
 from tvl_scanner.http import make_client
 from tvl_scanner.models import (
@@ -138,6 +139,12 @@ async def enrich_one(
     if github_url:
         repo_metadata = await enrich_repo(github_url, client=client)
 
+    # Etherscan V2 verification check — EVM only, skipped for Solana and for
+    # synthetic DefiLlama addresses that were never on-chain to begin with.
+    verification: VerificationResult = await check_verification(
+        contract.chain, contract.address, client=client
+    )
+
     languages = _derive_languages(contract.chain, repo_metadata)
 
     # Bounty registry lookup (seeds file) — upgrades bounty_program from "none"
@@ -173,6 +180,11 @@ async def enrich_one(
         github_audits_folder_exists=bool(
             repo_metadata and repo_metadata.audits_folder_exists
         ),
+        is_verified=verification.is_verified,
+        contract_name=verification.contract_name,
+        is_proxy=verification.is_proxy,
+        proxy_impl_address=verification.proxy_impl_address,
+        compiler_version=verification.compiler_version,
     )
 
 

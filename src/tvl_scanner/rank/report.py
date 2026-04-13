@@ -55,14 +55,28 @@ def _fmt_loc(loc: int | None) -> str:
     return str(loc)
 
 
+def _verification_cell(candidate: CandidateRecord) -> str:
+    """Compact verification status for the summary table.
+
+    Values: '✓' verified, '✗' unverified, 'P' proxy-verified, '?' unknown/not-checked.
+    """
+    if candidate.is_verified is None:
+        return "?"
+    if not candidate.is_verified:
+        return "✗"
+    if candidate.is_proxy:
+        return "P"
+    return "✓"
+
+
 def _summary_table(candidates: list[CandidateRecord]) -> str:
     """Render the ranked summary table for the scan report."""
     lines: list[str] = []
     lines.append(
-        "| Rank | Protocol | Chain | TVL | Age | LOC | Audits | Under-audited | Priority | Record |"
+        "| Rank | Protocol | Chain | TVL | Age | LOC | Audits | Under-audited | Ver | Bounty | Priority | Record |"
     )
     lines.append(
-        "|------|----------|-------|-----|-----|-----|--------|---------------|----------|--------|"
+        "|------|----------|-------|-----|-----|-----|--------|---------------|-----|--------|----------|--------|"
     )
     for i, c in enumerate(candidates, start=1):
         record_link = f"[→](./{{scan_slug}}/candidates/{i:02d}-{c.target_name}.md)"
@@ -72,8 +86,9 @@ def _summary_table(candidates: list[CandidateRecord]) -> str:
             else "—"
         )
         under_cell = "✓" if c.under_audited else ""
+        bounty_cell = c.bounty_program if c.bounty_program != "none" else "—"
         lines.append(
-            "| {rank} | {name} | {chain} | {tvl} | {age} | {loc} | {audits} | {under} | {prio} | {link} |".format(
+            "| {rank} | {name} | {chain} | {tvl} | {age} | {loc} | {audits} | {under} | {ver} | {bounty} | {prio} | {link} |".format(
                 rank=i,
                 name=c.display_name[:40],
                 chain=c.chain.value,
@@ -82,6 +97,8 @@ def _summary_table(candidates: list[CandidateRecord]) -> str:
                 loc=_fmt_loc(c.loc_estimate),
                 audits=audits_cell,
                 under=under_cell,
+                ver=_verification_cell(c),
+                bounty=bounty_cell,
                 prio=f"{c.priority_score:.1f}",
                 link=record_link,
             )
@@ -143,6 +160,43 @@ def _candidate_body(candidate: CandidateRecord) -> str:
         lines.append(f"- **Docs**: {candidate.docs_url}")
     lines.append(f"- **Languages**: {', '.join(l.value for l in candidate.languages)}")
     lines.append("")
+
+    # Verification status (EVM only — Solana rows leave is_verified=None)
+    if candidate.is_verified is not None:
+        lines.append("## On-chain verification (Etherscan V2)")
+        lines.append("")
+        if candidate.is_verified:
+            lines.append(f"- **Status**: ✓ Verified")
+            if candidate.contract_name:
+                lines.append(f"- **Contract name**: `{candidate.contract_name}`")
+            if candidate.compiler_version:
+                lines.append(f"- **Compiler**: `{candidate.compiler_version}`")
+            if candidate.is_proxy:
+                lines.append(
+                    f"- **Proxy**: ✓ EIP-1967 proxy detected → impl `{candidate.proxy_impl_address or 'not set'}`"
+                )
+                lines.append(
+                    "  - ⚠ When auditing, check BOTH the proxy and the implementation. "
+                    "Unverified implementation behind a verified proxy is a common obfuscation pattern."
+                )
+        else:
+            lines.append("- **Status**: ✗ UNVERIFIED")
+            lines.append(
+                "  - ⚠ **Red flag**: the deployed bytecode is not verified on Etherscan. "
+                "Either the team hasn't verified yet (ultra-fresh deployment) or they're hiding source. "
+                "Do not audit without source — confirm the team has a plan to verify before committing time."
+            )
+        lines.append("")
+
+    if candidate.bounty_program != "none":
+        lines.append(f"## Bounty program")
+        lines.append("")
+        lines.append(f"- **Platform**: {candidate.bounty_program}")
+        if candidate.bounty_url:
+            lines.append(f"- **URL**: {candidate.bounty_url}")
+        if candidate.bounty_max_payout_usd:
+            lines.append(f"- **Max payout**: ${candidate.bounty_max_payout_usd:,}")
+        lines.append("")
 
     lines.append("## Audit history")
     lines.append("")
@@ -236,6 +290,12 @@ def _frontmatter_dict(candidate: CandidateRecord) -> dict[str, Any]:
         "priority_score": candidate.priority_score,
         "why_interesting": candidate.why_interesting,
         "scan_date": candidate.scan_date.isoformat(),
+        # --- Etherscan V2 verification (EVM only; None on Solana/synthetic) ---
+        "is_verified": candidate.is_verified,
+        "contract_name": candidate.contract_name,
+        "is_proxy": candidate.is_proxy,
+        "proxy_impl_address": candidate.proxy_impl_address,
+        "compiler_version": candidate.compiler_version,
     }
 
 

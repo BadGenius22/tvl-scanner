@@ -108,6 +108,16 @@ class EnrichedCandidate(BaseModel):
     defillama_audit_links: list[HttpUrl] = Field(default_factory=list)
     github_audits_folder_exists: bool = False
 
+    # Etherscan V2 verification enrichment (EVM only; Solana records leave these blank).
+    # Populated by Stage 2 via enrich/etherscan.py when the candidate has an EVM
+    # address. `is_verified=False` is a RED FLAG — scanner still reports the candidate,
+    # but the per-candidate file carries a warning.
+    is_verified: bool | None = None
+    contract_name: str | None = None
+    is_proxy: bool = False
+    proxy_impl_address: str | None = None
+    compiler_version: str | None = None
+
 
 class AuditedCandidate(EnrichedCandidate):
     """Stage 3 output: enriched candidate with audit density computed."""

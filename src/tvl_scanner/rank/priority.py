@@ -141,9 +141,27 @@ def _why_interesting(
 
 
 def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[str]:
-    """Generate 2-4 suggested focus areas for the VAULT_CONTEXT.md lift."""
-    s = settings()
+    """Generate suggested focus areas for the VAULT_CONTEXT.md lift.
+
+    Hints are emitted in priority order: verification red flags first (they
+    gate whether the candidate is even worth auditing), then edge-match
+    specializations, then generic hints. Capped at 5 total.
+    """
     suggestions: list[str] = []
+
+    # On-chain verification hints — highest priority, directly actionable
+    if candidate.is_verified is False:
+        suggestions.append(
+            "⚠ UNVERIFIED on Etherscan — source code is not public. Confirm the team has a plan to verify "
+            "before committing audit time; auditing unverified bytecode is rarely productive."
+        )
+    elif candidate.is_proxy:
+        impl = candidate.proxy_impl_address or "impl slot"
+        suggestions.append(
+            f"EIP-1967 proxy detected → implementation at `{impl}`. Audit BOTH slots: the proxy itself "
+            f"(upgrade authority, initializer guard) and the current implementation. Check for upgrade "
+            f"race conditions and uninitialized slot exploits."
+        )
 
     # Edge-match hints
     if "leverage" in edge_keywords:
@@ -188,7 +206,7 @@ def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[
             f"Standard breadth sweep on {candidate.languages[0].value} code; no edge-match tailwinds"
         )
 
-    return suggestions[:4]  # cap at 4
+    return suggestions[:5]
 
 
 def rank_candidate(candidate: AuditedCandidate, *, scan_date: date) -> CandidateRecord:

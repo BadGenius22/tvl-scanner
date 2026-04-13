@@ -1,0 +1,21 @@
+{
+  "status": "1",
+  "message": "OK",
+  "result": [
+    {
+      "SourceCode": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.20;\ncontract TransparentUpgradeableProxy { /* ... */ }",
+      "ABI": "[...]",
+      "ContractName": "TransparentUpgradeableProxy",
+      "CompilerVersion": "v0.8.20+commit.a1b79de6",
+      "OptimizationUsed": "1",
+      "Runs": "200",
+      "ConstructorArguments": "0x000000...",
+      "EVMVersion": "Default",
+      "Library": "",
+      "LicenseType": "MIT",
+      "Proxy": "1",
+      "Implementation": "0xDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF",
+      "SwarmSource": ""
+    }
+  ]
+}
