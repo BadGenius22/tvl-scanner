@@ -1,0 +1,261 @@
+# Curated GitHub repository registry.
+#
+# DefiLlama's /protocols catalog and /protocol/{slug} detail endpoint don't
+# reliably expose github URLs — even for well-known protocols with obvious
+# public repos. This seed file fills that gap: when both DefiLlama paths
+# return nothing for a given slug, the scanner falls back to this registry.
+#
+# A match here unlocks:
+#   - LOC estimate (via GitHub /languages endpoint)
+#   - `audits/` folder check (via GitHub /contents endpoint)
+#   - Language detection beyond the chain-default heuristic
+#
+# Entries are matched by exact slug (lowercase, after strip). Add new entries
+# freely — this is a flat text file, committed in git.
+
+- slug: pendle
+  github: https://github.com/pendle-finance/pendle-core-v2-public
+- slug: pendle-v2
+  github: https://github.com/pendle-finance/pendle-core-v2-public
+
+- slug: aave
+  github: https://github.com/aave/aave-v3-core
+- slug: aave-v2
+  github: https://github.com/aave/protocol-v2
+- slug: aave-v3
+  github: https://github.com/aave/aave-v3-core
+
+- slug: compound
+  github: https://github.com/compound-finance/compound-protocol
+- slug: compound-v3
+  github: https://github.com/compound-finance/comet
+
+- slug: uniswap
+  github: https://github.com/Uniswap/v3-core
+- slug: uniswap-v3
+  github: https://github.com/Uniswap/v3-core
+- slug: uniswap-v4
+  github: https://github.com/Uniswap/v4-core
+
+- slug: curve
+  github: https://github.com/curvefi/curve-contract
+- slug: curve-finance
+  github: https://github.com/curvefi/curve-contract
+- slug: curve-dex
+  github: https://github.com/curvefi/curve-contract
+
+- slug: balancer
+  github: https://github.com/balancer/balancer-v2-monorepo
+- slug: balancer-v2
+  github: https://github.com/balancer/balancer-v2-monorepo
+- slug: balancer-v3
+  github: https://github.com/balancer/balancer-v3-monorepo
+
+- slug: makerdao
+  github: https://github.com/makerdao/dss
+- slug: maker
+  github: https://github.com/makerdao/dss
+- slug: sky
+  github: https://github.com/makerdao/dss
+
+- slug: spark
+  github: https://github.com/marsfoundation/spark
+- slug: spark-savings
+  github: https://github.com/marsfoundation/spark
+- slug: spark-protocol
+  github: https://github.com/marsfoundation/spark
+- slug: sparklend
+  github: https://github.com/marsfoundation/spark-lend-deployments
+
+- slug: silo
+  github: https://github.com/silo-finance/silo-contracts-v2
+- slug: silo-finance
+  github: https://github.com/silo-finance/silo-contracts-v2
+- slug: silo-v2
+  github: https://github.com/silo-finance/silo-contracts-v2
+
+- slug: morpho
+  github: https://github.com/morpho-org/morpho-blue
+- slug: morpho-blue
+  github: https://github.com/morpho-org/morpho-blue
+
+- slug: gearbox
+  github: https://github.com/Gearbox-protocol/core-v3
+- slug: gearbox-protocol
+  github: https://github.com/Gearbox-protocol/core-v3
+- slug: gearbox-v3
+  github: https://github.com/Gearbox-protocol/core-v3
+
+- slug: gmx
+  github: https://github.com/gmx-io/gmx-contracts
+- slug: gmx-v2
+  github: https://github.com/gmx-io/gmx-synthetics
+
+- slug: euler
+  github: https://github.com/euler-xyz/euler-vault-kit
+- slug: euler-v2
+  github: https://github.com/euler-xyz/euler-vault-kit
+- slug: euler-finance
+  github: https://github.com/euler-xyz/euler-contracts
+
+- slug: lido
+  github: https://github.com/lidofinance/lido-dao
+- slug: lido-finance
+  github: https://github.com/lidofinance/lido-dao
+
+- slug: synthetix
+  github: https://github.com/Synthetixio/synthetix-v3
+- slug: synthetix-v3
+  github: https://github.com/Synthetixio/synthetix-v3
+
+- slug: rocket-pool
+  github: https://github.com/rocket-pool/rocketpool
+- slug: rocketpool
+  github: https://github.com/rocket-pool/rocketpool
+
+- slug: convex
+  github: https://github.com/convex-eth/platform
+- slug: convex-finance
+  github: https://github.com/convex-eth/platform
+
+- slug: yearn
+  github: https://github.com/yearn/yearn-vaults-v3
+- slug: yearn-finance
+  github: https://github.com/yearn/yearn-vaults-v3
+- slug: yearn-v3
+  github: https://github.com/yearn/yearn-vaults-v3
+
+- slug: maple
+  github: https://github.com/maple-labs/maple-core-v2
+- slug: maple-finance
+  github: https://github.com/maple-labs/maple-core-v2
+- slug: maple-v2
+  github: https://github.com/maple-labs/maple-core-v2
+
+- slug: frax
+  github: https://github.com/FraxFinance/frax-solidity
+- slug: frax-finance
+  github: https://github.com/FraxFinance/frax-solidity
+
+- slug: hyperlane
+  github: https://github.com/hyperlane-xyz/hyperlane-monorepo
+- slug: hyperlane-nexus
+  github: https://github.com/hyperlane-xyz/hyperlane-monorepo
+
+- slug: synapse
+  github: https://github.com/synapsecns/sanguine
+- slug: synapse-protocol
+  github: https://github.com/synapsecns/sanguine
+
+- slug: layerzero
+  github: https://github.com/LayerZero-Labs/LayerZero-v2
+- slug: layerzero-v2
+  github: https://github.com/LayerZero-Labs/LayerZero-v2
+- slug: stargate
+  github: https://github.com/stargate-protocol/stargate
+- slug: stargate-finance
+  github: https://github.com/stargate-protocol/stargate
+- slug: stargate-v2
+  github: https://github.com/stargate-protocol/stargate-v2
+
+- slug: wormhole
+  github: https://github.com/wormhole-foundation/wormhole
+
+- slug: camelot
+  github: https://github.com/CamelotLabs/contracts-v3
+- slug: camelot-v3
+  github: https://github.com/CamelotLabs/contracts-v3
+
+- slug: velodrome
+  github: https://github.com/velodrome-finance/contracts
+- slug: velodrome-v2
+  github: https://github.com/velodrome-finance/contracts
+
+- slug: beefy
+  github: https://github.com/beefyfinance/beefy-contracts
+- slug: beefy-finance
+  github: https://github.com/beefyfinance/beefy-contracts
+
+- slug: venus
+  github: https://github.com/VenusProtocol/venus-protocol
+- slug: venus-finance
+  github: https://github.com/VenusProtocol/venus-protocol
+
+- slug: hop
+  github: https://github.com/hop-protocol/contracts-v2
+- slug: hop-protocol
+  github: https://github.com/hop-protocol/contracts-v2
+
+- slug: pancakeswap
+  github: https://github.com/pancakeswap/pancake-contracts
+
+- slug: dydx
+  github: https://github.com/dydxprotocol/v4-chain
+- slug: dydx-v4
+  github: https://github.com/dydxprotocol/v4-chain
+- slug: dydx-chain
+  github: https://github.com/dydxprotocol/v4-chain
+
+- slug: 1inch
+  github: https://github.com/1inch/1inch-v6-contracts
+
+- slug: renzo
+  github: https://github.com/Renzo-Protocol/Contracts-Public
+- slug: renzo-protocol
+  github: https://github.com/Renzo-Protocol/Contracts-Public
+
+- slug: etherfi
+  github: https://github.com/etherfi-protocol/smart-contracts
+- slug: ether-fi
+  github: https://github.com/etherfi-protocol/smart-contracts
+
+- slug: puffer
+  github: https://github.com/PufferFinance/pufETH
+- slug: puffer-finance
+  github: https://github.com/PufferFinance/pufETH
+
+# Solana protocols
+
+- slug: jito
+  github: https://github.com/jito-foundation/stakenet
+- slug: jito-sol
+  github: https://github.com/jito-foundation/stakenet
+
+- slug: marinade
+  github: https://github.com/marinade-finance/liquid-staking-program
+- slug: marinade-finance
+  github: https://github.com/marinade-finance/liquid-staking-program
+
+- slug: kamino
+  github: https://github.com/Kamino-Finance/klend
+- slug: kamino-finance
+  github: https://github.com/Kamino-Finance/klend
+- slug: kamino-lend
+  github: https://github.com/Kamino-Finance/klend
+
+- slug: drift
+  github: https://github.com/drift-labs/protocol-v2
+- slug: drift-v2
+  github: https://github.com/drift-labs/protocol-v2
+- slug: drift-protocol
+  github: https://github.com/drift-labs/protocol-v2
+
+- slug: jupiter
+  github: https://github.com/jup-ag/jupiter-cpi
+- slug: jupiter-exchange
+  github: https://github.com/jup-ag/jupiter-cpi
+
+- slug: raydium
+  github: https://github.com/raydium-io/raydium-clmm
+
+- slug: orca
+  github: https://github.com/orca-so/whirlpools
+- slug: orca-whirlpools
+  github: https://github.com/orca-so/whirlpools
+
+- slug: mango
+  github: https://github.com/blockworks-foundation/mango-v4
+- slug: mango-markets
+  github: https://github.com/blockworks-foundation/mango-v4
+- slug: mango-v4
+  github: https://github.com/blockworks-foundation/mango-v4

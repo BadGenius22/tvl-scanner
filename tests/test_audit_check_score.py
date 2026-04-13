@@ -124,3 +124,91 @@ def test_compute_score_preserves_enriched_fields() -> None:
     assert result.target_name == candidate.target_name
     assert result.display_name == candidate.display_name
     assert result.tvl_usd == candidate.tvl_usd
+
+
+def test_compute_score_defillama_count_override_forces_not_under_audited() -> None:
+    """Batch I fix #2: a candidate with low total_score but defillama_audit_count >= 2
+    should be forced to under_audited=False.
+    """
+    # Construct a candidate with NO audit signals other than defillama_audit_count=3.
+    # Total score would normally be 0 → under_audited=True. But with audit_count=3
+    # the override kicks in and flips it.
+    import datetime
+    from tvl_scanner.models import (
+        Chain,
+        DiscoverySource,
+        EnrichedCandidate,
+        Language,
+    )
+
+    candidate = EnrichedCandidate(
+        chain=Chain.ARBITRUM,
+        address="0xABC",
+        tvl_usd=500000,
+        first_seen=datetime.date(2026, 3, 15),
+        source=DiscoverySource.DEFILLAMA_CATALOG,
+        target_name="test",
+        display_name="Test Protocol",
+        protocol_type="Lending on arbitrum",
+        languages=[Language.SOLIDITY],
+        defillama_audit_count=3,  # KEY: DL reports 3 audits
+        defillama_audit_links=[],  # but no linked audits (the override path)
+    )
+    result = compute_score(candidate, contest_sources=[])
+    # audit_count=3 generates 3 phantom DL sources → score=3, but the important
+    # assertion is under_audited=False from the override
+    assert result.under_audited is False
+
+
+def test_compute_score_defillama_count_zero_leaves_under_audited_true() -> None:
+    """A candidate with defillama_audit_count=0 should NOT trigger the override."""
+    import datetime
+    from tvl_scanner.models import (
+        Chain,
+        DiscoverySource,
+        EnrichedCandidate,
+        Language,
+    )
+
+    candidate = EnrichedCandidate(
+        chain=Chain.ARBITRUM,
+        address="0xABC",
+        tvl_usd=500000,
+        first_seen=datetime.date(2026, 3, 15),
+        source=DiscoverySource.DEFILLAMA_CATALOG,
+        target_name="test",
+        display_name="Fresh Protocol",
+        protocol_type="Lending on arbitrum",
+        languages=[Language.SOLIDITY],
+        defillama_audit_count=0,
+    )
+    result = compute_score(candidate, contest_sources=[])
+    assert result.under_audited is True
+    assert result.audit_density_score == 0
+
+
+def test_compute_score_defillama_count_one_does_not_override() -> None:
+    """audit_count=1 is below the override threshold of 2 (single audit is weak signal)."""
+    import datetime
+    from tvl_scanner.models import (
+        Chain,
+        DiscoverySource,
+        EnrichedCandidate,
+        Language,
+    )
+
+    candidate = EnrichedCandidate(
+        chain=Chain.ARBITRUM,
+        address="0xABC",
+        tvl_usd=500000,
+        first_seen=datetime.date(2026, 3, 15),
+        source=DiscoverySource.DEFILLAMA_CATALOG,
+        target_name="test",
+        display_name="One Audit Protocol",
+        protocol_type="Lending on arbitrum",
+        languages=[Language.SOLIDITY],
+        defillama_audit_count=1,
+    )
+    result = compute_score(candidate)
+    # Score=1, threshold=2 → still under_audited, override does NOT trigger
+    assert result.under_audited is True

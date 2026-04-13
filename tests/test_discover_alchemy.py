@@ -122,6 +122,10 @@ async def test_fetch_fresh_deployments_happy_path() -> None:
             if addr == "0xLow":
                 return hex(1 * 10**17)  # 0.1 ETH
             return "0x0"
+        if method == "alchemy_getTokenBalances":
+            # Return empty token holdings for both addrs — this test exercises
+            # the native-only path. A separate test covers the ERC20 path.
+            return {"tokenBalances": []}
         return None
 
     price_cache = PriceCache()
@@ -134,6 +138,7 @@ async def test_fetch_fresh_deployments_happy_path() -> None:
                 "tvl_scanner.discover.alchemy._sample_blocks",
                 return_value=[95, 90],  # deterministic for this test
             ):
+                # No ERC20 tokens → fetch_prices is never called, no mock needed
                 result = await fetch_fresh_deployments(
                     Chain.ARBITRUM,
                     price_cache=price_cache,
@@ -150,6 +155,115 @@ async def test_fetch_fresh_deployments_happy_path() -> None:
     assert all(r.source == DiscoverySource.ALCHEMY_DEPLOYMENTS for r in result)
     assert all(r.tvl_usd == pytest.approx(150000.0) for r in result)
     assert all(r.chain == Chain.ARBITRUM for r in result)
+
+
+async def test_fetch_fresh_deployments_counts_erc20_holdings() -> None:
+    """Batch I fix #3: contracts holding USDC/WETH should now pass the TVL filter
+    even when they have zero native balance.
+    """
+    from tvl_scanner.enrich.defillama_prices import TokenPrice
+
+    USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # real USDC address
+    WETH = "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"  # example
+
+    async def mock_rpc(url, method, params, client):
+        if method == "eth_blockNumber":
+            return "0x64"
+        if method == "alchemy_getTransactionReceipts":
+            return {"receipts": [{"contractAddress": "0xDeFiContract", "status": "0x1"}]}
+        if method == "eth_getBalance":
+            return "0x0"  # zero native balance
+        if method == "alchemy_getTokenBalances":
+            return {
+                "tokenBalances": [
+                    # 150,000 USDC = 150_000 × 10^6
+                    {"contractAddress": USDC, "tokenBalance": hex(150_000 * 10**6)},
+                    # 0.5 WETH = 5 × 10^17
+                    {"contractAddress": WETH, "tokenBalance": hex(5 * 10**17)},
+                ]
+            }
+        return None
+
+    mock_prices = {
+        f"arbitrum:{USDC.lower()}": TokenPrice(
+            symbol="USDC", price=1.0, decimals=6, confidence=1.0
+        ),
+        f"arbitrum:{WETH.lower()}": TokenPrice(
+            symbol="WETH", price=3000.0, decimals=18, confidence=1.0
+        ),
+    }
+
+    price_cache = PriceCache()
+    price_cache._prices[Chain.ARBITRUM] = 3000.0
+
+    with patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"):
+        with patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)):
+            with patch(
+                "tvl_scanner.discover.alchemy._sample_blocks",
+                return_value=[95],
+            ):
+                with patch(
+                    "tvl_scanner.discover.alchemy.fetch_prices",
+                    new=AsyncMock(return_value=mock_prices),
+                ):
+                    result = await fetch_fresh_deployments(
+                        Chain.ARBITRUM,
+                        price_cache=price_cache,
+                        lookback_days=7,
+                        sample_blocks=1,
+                    )
+
+    # USDC: 150,000 × $1.0 = $150,000
+    # WETH: 0.5 × $3,000 = $1,500
+    # Native: 0 × $3,000 = $0
+    # Total: $151,500 > $100k → kept
+    assert len(result) == 1
+    assert result[0].address == "0xDeFiContract"
+    assert result[0].tvl_usd == pytest.approx(151500.0, rel=0.001)
+
+
+async def test_fetch_fresh_deployments_skips_unknown_tokens() -> None:
+    """Tokens that DefiLlama can't price should be silently skipped, not crash."""
+    UNKNOWN = "0xDeadBeefDeadBeefDeadBeefDeadBeefDeadBeef"
+
+    async def mock_rpc(url, method, params, client):
+        if method == "eth_blockNumber":
+            return "0x64"
+        if method == "alchemy_getTransactionReceipts":
+            return {"receipts": [{"contractAddress": "0xNoPriceToken", "status": "0x1"}]}
+        if method == "eth_getBalance":
+            return hex(40 * 10**18)  # 40 ETH = $120k native → above threshold
+        if method == "alchemy_getTokenBalances":
+            return {
+                "tokenBalances": [
+                    {"contractAddress": UNKNOWN, "tokenBalance": hex(10**18)},
+                ]
+            }
+        return None
+
+    price_cache = PriceCache()
+    price_cache._prices[Chain.ARBITRUM] = 3000.0
+
+    with patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"):
+        with patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)):
+            with patch(
+                "tvl_scanner.discover.alchemy._sample_blocks",
+                return_value=[95],
+            ):
+                with patch(
+                    "tvl_scanner.discover.alchemy.fetch_prices",
+                    new=AsyncMock(return_value={}),  # no prices returned
+                ):
+                    result = await fetch_fresh_deployments(
+                        Chain.ARBITRUM,
+                        price_cache=price_cache,
+                        lookback_days=7,
+                        sample_blocks=1,
+                    )
+
+    # Only native balance counted (ERC20 unknown → skipped), 40 ETH × $3000 = $120k
+    assert len(result) == 1
+    assert result[0].tvl_usd == pytest.approx(120000.0)
 
 
 async def test_fetch_fresh_deployments_zero_native_price_returns_empty() -> None:

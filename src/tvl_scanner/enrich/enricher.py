@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from tvl_scanner.config import settings
-from tvl_scanner.enrich import bounty
+from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
@@ -136,6 +136,7 @@ async def enrich_one(
     github_url = None
     dl_audit_count: int | None = None
     dl_audit_note: str | None = None
+    dl_slug: str | None = None
     if dl_match:
         github_field = dl_match.get("github")
         if isinstance(github_field, list) and github_field:
@@ -153,15 +154,27 @@ async def enrich_one(
         # count and `audit_links` but NO `audit_note`. Detail has all three.
         slug = dl_match.get("slug")
         if slug:
-            detail = await catalog.fetch_detail(str(slug), client=client)
+            dl_slug = str(slug)
+            detail = await catalog.fetch_detail(dl_slug, client=client)
             if detail:
                 dl_audit_count = _coerce_audit_count(detail.get("audits"))
                 note_raw = detail.get("audit_note")
                 if isinstance(note_raw, str) and note_raw.strip():
                     dl_audit_note = note_raw.strip()
+                # Also try to extract github URL from detail if flat was empty
+                if not github_url:
+                    detail_gh = detail.get("github")
+                    if isinstance(detail_gh, list) and detail_gh:
+                        github_url = str(detail_gh[0])
+                    elif isinstance(detail_gh, str):
+                        github_url = detail_gh
             # Fallback to the flat catalog's `audits` field if detail didn't help
             if dl_audit_count is None:
                 dl_audit_count = _coerce_audit_count(dl_match.get("audits"))
+
+    # BATCH I fix #1: curated seed-file fallback when both DefiLlama paths fail
+    if not github_url and dl_slug:
+        github_url = github_registry.lookup(dl_slug)
 
     repo_metadata: RepoMetadata | None = None
     if github_url:

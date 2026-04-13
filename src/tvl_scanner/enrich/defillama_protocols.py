@@ -30,7 +30,7 @@ from typing import Any
 import httpx
 
 from tvl_scanner.config import settings
-from tvl_scanner.enrich import bounty
+from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.github import enrich_repo
 
@@ -224,10 +224,14 @@ async def _process_protocol(
         if dl_audit_count is None:
             dl_audit_count = _coerce_audit_count(protocol.get("audits"))
 
-        # github_url resolution: flat catalog → detail → None
+        # github_url resolution: flat catalog → detail → curated registry → None
+        # BATCH I fix #1: curated seed file as the final fallback, covering
+        # ~50 well-known protocols whose DefiLlama entries lack a github URL.
         github_url = _extract_github_url(protocol)
         if not github_url and detail:
             github_url = _extract_github_url(detail)
+        if not github_url:
+            github_url = github_registry.lookup(slug)
 
         repo_metadata = None
         if github_url:

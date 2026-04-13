@@ -104,6 +104,15 @@ def compute_score(
     Caller is responsible for fetching `contest_sources` (via the contests
     module) — this function is pure and synchronous so it's testable in
     isolation.
+
+    BATCH I fix #2: under_audited logic now has a definitive-override path.
+    Previously any candidate with total_score ≤ 2 was flagged as
+    under-audited, which mislabeled protocols like Pendle/Convex/Lido/Maple
+    whose DefiLlama audit count was exactly 2 but who are heavily audited in
+    reality (DefiLlama's count undercounts patches and follow-up reviews).
+    If DefiLlama explicitly reports audit_count ≥ 2, we trust that as
+    definitive evidence of prior auditing and force under_audited=False,
+    regardless of what total_score lands at.
     """
     contest_sources = contest_sources or []
 
@@ -114,6 +123,15 @@ def compute_score(
 
     total_score = sum(src.weight for src in all_sources)
     under_audited = total_score <= UNDER_AUDITED_THRESHOLD
+
+    # Definitive-override: DefiLlama-reported audit count ≥ 2 wins over
+    # any weaker aggregated signal. Catches protocols whose underlying
+    # audits exist but aren't all visible to GitHub contest search.
+    if (
+        candidate.defillama_audit_count is not None
+        and candidate.defillama_audit_count >= 2
+    ):
+        under_audited = False
 
     return AuditedCandidate(
         **candidate.model_dump(),

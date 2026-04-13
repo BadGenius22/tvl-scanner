@@ -35,6 +35,12 @@ from typing import Any
 import httpx
 
 from tvl_scanner.config import get_secret, settings
+from tvl_scanner.enrich.defillama_prices import (
+    CHAIN_TO_DEFILLAMA_SLUG,
+    TokenPrice,
+    _build_coin_key,
+    fetch_prices,
+)
 from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.http import HttpError, make_client
 from tvl_scanner.models import Chain, DiscoveredContract, DiscoverySource
@@ -161,6 +167,35 @@ async def _get_balance(
     return _hex_to_int(result) if isinstance(result, str) else 0
 
 
+async def _get_token_balances(
+    url: str, address: str, client: httpx.AsyncClient
+) -> list[tuple[str, int]]:
+    """Return the address's non-zero ERC20 token balances as (token_addr, raw_balance).
+
+    Uses Alchemy's `alchemy_getTokenBalances` extension. Returns an empty list
+    on any failure or when the address holds no tracked tokens.
+    """
+    result = await _rpc_call(url, "alchemy_getTokenBalances", [address], client)
+    if not isinstance(result, dict):
+        return []
+    raw_balances = result.get("tokenBalances")
+    if not isinstance(raw_balances, list):
+        return []
+
+    out: list[tuple[str, int]] = []
+    for item in raw_balances:
+        if not isinstance(item, dict):
+            continue
+        token_addr = item.get("contractAddress")
+        raw_bal = item.get("tokenBalance")
+        if not token_addr or not raw_bal or raw_bal == "0x0":
+            continue
+        wei_balance = _hex_to_int(str(raw_bal))
+        if wei_balance > 0:
+            out.append((str(token_addr), wei_balance))
+    return out
+
+
 def _extract_creations(receipts: list[dict], chain: Chain) -> list[str]:
     """Pull successful contract-creation addresses from a list of receipts."""
     creations: list[str] = []
@@ -250,21 +285,28 @@ async def fetch_fresh_deployments(
         if total_creations == 0:
             return []
 
-        # Step 4: batch check balances
+        # Step 4: batch check BOTH native balance and ERC20 token balances
+        # for each creation. Batch I fix #3: previously we only looked at
+        # the native balance which missed ~95% of DeFi protocols that hold
+        # user-deposited USDC/WETH/etc. Now we fetch token holdings via
+        # alchemy_getTokenBalances and price them via DefiLlama /prices.
         all_creations = [
             (block, addr) for block, addrs in creations_by_block.items() for addr in addrs
         ]
         balance_sem = asyncio.Semaphore(BALANCE_CHECK_CONCURRENCY)
 
-        async def _bounded_balance(block: int, addr: str) -> tuple[int, str, int]:
+        async def _bounded_balances(
+            block: int, addr: str
+        ) -> tuple[int, str, int, list[tuple[str, int]]]:
             async with balance_sem:
                 wei = await _get_balance(url, addr, client)
-                return block, addr, wei
+                tokens = await _get_token_balances(url, addr, client)
+                return block, addr, wei, tokens
 
-        balance_tasks = [_bounded_balance(b, a) for (b, a) in all_creations]
+        balance_tasks = [_bounded_balances(b, a) for (b, a) in all_creations]
         balance_results = await asyncio.gather(*balance_tasks, return_exceptions=True)
 
-        # Step 5: convert balance to USD and filter
+        # Step 5a: resolve native USD price once for this chain
         native_usd = await price_cache.get(chain, client=client)
         if native_usd <= 0:
             log.warning(
@@ -273,19 +315,55 @@ async def fetch_fresh_deployments(
             )
             return []
 
-        block_time = BLOCK_TIME_SECONDS.get(chain, 12.0)
-
-        kept: list[DiscoveredContract] = []
+        # Step 5b: collect every unique ERC20 token we need a price for,
+        # then batch-fetch all prices in one (or a few) DefiLlama calls.
+        unique_coin_keys: set[str] = set()
+        valid_results: list[tuple[int, str, int, list[tuple[str, int]]]] = []
         for bal_result in balance_results:
             if isinstance(bal_result, BaseException):
                 continue
-            block, addr, wei = bal_result
-            balance_eth = wei / 1e18
-            balance_usd = balance_eth * native_usd
-            if balance_usd < s.MIN_TVL_USD:
+            valid_results.append(bal_result)
+            _, _, _, token_balances = bal_result
+            for token_addr, _raw in token_balances:
+                key = _build_coin_key(chain, token_addr)
+                if key:
+                    unique_coin_keys.add(key)
+
+        price_map: dict[str, TokenPrice] = {}
+        if unique_coin_keys:
+            log.info(
+                "alchemy %s: fetching %d unique ERC20 prices from DefiLlama",
+                chain.value,
+                len(unique_coin_keys),
+            )
+            price_map = await fetch_prices(sorted(unique_coin_keys), client=client)
+
+        # Step 5c: compute total USD TVL per contract and filter
+        block_time = BLOCK_TIME_SECONDS.get(chain, 12.0)
+        kept: list[DiscoveredContract] = []
+
+        for block, addr, wei, token_balances in valid_results:
+            native_value_usd = (wei / 1e18) * native_usd
+
+            erc20_value_usd = 0.0
+            for token_addr, raw_bal in token_balances:
+                key = _build_coin_key(chain, token_addr)
+                if not key:
+                    continue
+                price = price_map.get(key)
+                if not price:
+                    continue  # unknown token, skip
+                try:
+                    erc20_value_usd += (
+                        raw_bal / (10 ** price.decimals)
+                    ) * price.price
+                except (ZeroDivisionError, OverflowError):
+                    continue
+
+            total_tvl_usd = native_value_usd + erc20_value_usd
+            if total_tvl_usd < s.MIN_TVL_USD:
                 continue
 
-            # Estimate deployment date from block number
             blocks_ago = latest - block
             seconds_ago = blocks_ago * block_time
             deployed_at = datetime.fromtimestamp(
@@ -296,20 +374,22 @@ async def fetch_fresh_deployments(
                 DiscoveredContract(
                     chain=chain,
                     address=addr,
-                    protocol_guess=None,  # no name available at discovery time
-                    tvl_usd=balance_usd,
+                    protocol_guess=None,
+                    tvl_usd=total_tvl_usd,
                     first_seen=deployed_at,
-                    unique_users_30d=None,  # unknown
+                    unique_users_30d=None,
                     source=DiscoverySource.ALCHEMY_DEPLOYMENTS,
                 )
             )
 
         log.info(
-            "alchemy %s: %d of %d fresh deployments above $%d threshold",
+            "alchemy %s: %d of %d fresh deployments above $%d threshold "
+            "(counting native + %d ERC20 tokens)",
             chain.value,
             len(kept),
             total_creations,
             s.MIN_TVL_USD,
+            len(price_map),
         )
         return kept
 
