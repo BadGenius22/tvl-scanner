@@ -1,0 +1,10 @@
+{
+  "is_verified": true,
+  "message": "On chain program verified",
+  "on_chain_hash": "c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2",
+  "executable_hash": "c1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2",
+  "last_verified_at": "2025-11-20T12:34:56Z",
+  "repo_url": "https://github.com/JitoFoundation/jito-solana",
+  "commit": "abc123def456789abcdef0123456789abcdef012",
+  "signer": "JitoVerifier1111111111111111111111111111111"
+}

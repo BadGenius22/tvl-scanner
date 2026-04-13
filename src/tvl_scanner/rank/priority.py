@@ -149,11 +149,26 @@ def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[
     """
     suggestions: list[str] = []
 
-    # On-chain verification hints — highest priority, directly actionable
-    if candidate.is_verified is False:
+    # On-chain verification hints — highest priority, directly actionable.
+    # Semantics differ by chain: EVM unverified is a red flag (verification is
+    # nearly universal), Solana unverified just means "not in OtterSec DB"
+    # which is the default for most programs.
+    is_solana = candidate.chain.value == "solana"
+    if not is_solana and candidate.is_verified is False:
         suggestions.append(
             "⚠ UNVERIFIED on Etherscan — source code is not public. Confirm the team has a plan to verify "
             "before committing audit time; auditing unverified bytecode is rarely productive."
+        )
+    elif is_solana and candidate.is_verified:
+        suggestions.append(
+            "✓ OtterSec reproducible build registered — the github_repo matches deployed bytecode. "
+            "Audit against the verified commit, not the latest `main`."
+        )
+    elif is_solana and candidate.is_verified is False:
+        suggestions.append(
+            "Not registered in OtterSec verified-builds DB (default for most Solana programs). "
+            "If this candidate progresses to audit, run `solana-verify` yourself to confirm the "
+            "github_repo commit matches the deployed bytecode before starting."
         )
     elif candidate.is_proxy:
         impl = candidate.proxy_impl_address or "impl slot"

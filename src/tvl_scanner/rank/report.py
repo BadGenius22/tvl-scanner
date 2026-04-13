@@ -58,8 +58,13 @@ def _fmt_loc(loc: int | None) -> str:
 def _verification_cell(candidate: CandidateRecord) -> str:
     """Compact verification status for the summary table.
 
-    Values: '✓' verified, '✗' unverified, 'P' proxy-verified, '?' unknown/not-checked.
+    EVM values: '✓' verified, '✗' unverified (RED FLAG), 'P' proxy, '?' not-checked
+    Solana values: '✓' OtterSec-registered, '—' not-registered (neutral default)
     """
+    is_solana = candidate.chain.value == "solana"
+    if is_solana:
+        return "✓" if candidate.is_verified else "—"
+    # EVM
     if candidate.is_verified is None:
         return "?"
     if not candidate.is_verified:
@@ -161,8 +166,33 @@ def _candidate_body(candidate: CandidateRecord) -> str:
     lines.append(f"- **Languages**: {', '.join(l.value for l in candidate.languages)}")
     lines.append("")
 
-    # Verification status (EVM only — Solana rows leave is_verified=None)
-    if candidate.is_verified is not None:
+    # Verification status. Render differently per chain:
+    #   EVM (Etherscan): is_verified is True/False, never None. False = red flag.
+    #   Solana (OtterSec): is_verified is True (verified) or False (not in OtterSec
+    #                      DB, which is the DEFAULT for most programs). False here
+    #                      does NOT mean "unverified source" — it means "reproducible
+    #                      build not registered". Render it as neutral informational.
+    is_solana = candidate.chain.value == "solana"
+    if is_solana:
+        lines.append("## Reproducible build (OtterSec)")
+        lines.append("")
+        if candidate.is_verified:
+            lines.append(f"- **Status**: ✓ Registered in OtterSec verified-builds DB")
+            if candidate.compiler_version:
+                lines.append(f"- **Verification ref**: `{candidate.compiler_version}`")
+            lines.append(
+                "  - The deployed program bytecode matches a reproducible build from the published source. "
+                "You can trust the github_repo above represents the audited code."
+            )
+        else:
+            lines.append("- **Status**: — Not registered in OtterSec")
+            lines.append(
+                "  - This is the default for most Solana programs (<20% are registered). "
+                "NOT a red flag — but you cannot trust that the github_repo matches the deployed "
+                "bytecode byte-for-byte without running `solana-verify` yourself."
+            )
+        lines.append("")
+    elif candidate.is_verified is not None:
         lines.append("## On-chain verification (Etherscan V2)")
         lines.append("")
         if candidate.is_verified:

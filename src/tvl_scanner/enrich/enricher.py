@@ -28,6 +28,7 @@ from tvl_scanner.enrich import bounty
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
+from tvl_scanner.enrich.ottersec import check_ottersec_verification
 from tvl_scanner.http import make_client
 from tvl_scanner.models import (
     Chain,
@@ -166,11 +167,17 @@ async def enrich_one(
     if github_url:
         repo_metadata = await enrich_repo(github_url, client=client)
 
-    # Etherscan V2 verification check — EVM only, skipped for Solana and for
-    # synthetic DefiLlama addresses that were never on-chain to begin with.
-    verification: VerificationResult = await check_verification(
-        contract.chain, contract.address, client=client
-    )
+    # Verification check — dispatches by chain. Etherscan V2 for EVM, OtterSec
+    # reproducible-build registry for Solana. Synthetic `defillama:<slug>`
+    # addresses fall through to empty VerificationResult in both paths.
+    if contract.chain == Chain.SOLANA:
+        verification: VerificationResult = await check_ottersec_verification(
+            contract.address, client=client
+        )
+    else:
+        verification = await check_verification(
+            contract.chain, contract.address, client=client
+        )
 
     languages = _derive_languages(contract.chain, repo_metadata)
 
