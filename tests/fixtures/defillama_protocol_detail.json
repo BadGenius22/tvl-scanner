@@ -1,0 +1,18 @@
+{
+  "id": "1",
+  "name": "Uniswap V3",
+  "slug": "uniswap-v3",
+  "category": "Dexes",
+  "description": "Uniswap V3",
+  "url": "https://uniswap.org",
+  "github": ["https://github.com/Uniswap/v3-core"],
+  "audits": 3,
+  "audit_note": "Last audited 2024-05 by Trail of Bits, ABDK Consulting, and Certora.",
+  "audit_links": [
+    "https://example.com/uniswap-audit-1.pdf",
+    "https://example.com/uniswap-audit-2.pdf"
+  ],
+  "chains": ["Ethereum", "Arbitrum", "Base"],
+  "tvl": 4200000000,
+  "symbol": "UNI"
+}

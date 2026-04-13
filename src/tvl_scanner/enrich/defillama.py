@@ -46,6 +46,7 @@ class DefiLlamaCatalog:
     def __init__(self) -> None:
         self._protocols: list[dict[str, Any]] = []
         self._loaded = False
+        self._detail_cache: dict[str, dict[str, Any] | None] = {}
 
     async def load(self, *, client: httpx.AsyncClient | None = None) -> None:
         s = settings()
@@ -64,6 +65,36 @@ class DefiLlamaCatalog:
             self._protocols = []
         self._loaded = True
         log.info("DefiLlama catalog loaded: %d protocols", len(self._protocols))
+
+    async def fetch_detail(
+        self, slug: str, *, client: httpx.AsyncClient | None = None
+    ) -> dict[str, Any] | None:
+        """Fetch `/protocol/{slug}` detail endpoint. Cached per slug per catalog.
+
+        Returns the raw JSON response as a dict. The detail endpoint has
+        `audits` as a count (may be string "2" or int 2), `audit_note` as
+        free-form text, and expanded `audit_links`.
+
+        Returns None on HTTP failure — caller should treat missing detail as
+        "no additional audit signal" rather than an error.
+        """
+        if slug in self._detail_cache:
+            return self._detail_cache[slug]
+
+        s = settings()
+        url = f"{s.DEFILLAMA_BASE}/protocol/{slug}"
+        try:
+            payload = await get_json(url, client=client)
+        except Exception as exc:
+            log.debug("DefiLlama detail fetch failed for %s: %s", slug, exc)
+            self._detail_cache[slug] = None
+            return None
+
+        if isinstance(payload, dict):
+            self._detail_cache[slug] = payload
+            return payload
+        self._detail_cache[slug] = None
+        return None
 
     def lookup(self, query: str) -> dict[str, Any] | None:
         """Return the best-matching protocol entry for `query`, or None.

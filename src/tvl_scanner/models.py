@@ -107,6 +107,13 @@ class EnrichedCandidate(BaseModel):
     bounty_max_payout_usd: int | None = None
     defillama_slug: str | None = None
     defillama_audit_links: list[HttpUrl] = Field(default_factory=list)
+    # From DefiLlama /protocol/{slug} detail endpoint — deeper signal than the
+    # flat /protocols catalog. audit_count is the integer count reported by
+    # DefiLlama (may differ from len(audit_links) if some audits are linked in
+    # prose elsewhere); audit_note is free-form text like "Last audited 2024-01
+    # by ToB, OpenZeppelin". Both None if the detail fetch wasn't made.
+    defillama_audit_count: int | None = None
+    defillama_audit_note: str | None = None
     github_audits_folder_exists: bool = False
 
     # Etherscan V2 verification enrichment (EVM only; Solana records leave these blank).

@@ -202,6 +202,13 @@ def _candidate_body(candidate: CandidateRecord) -> str:
     lines.append("")
     lines.append(f"- **Audit density score**: {candidate.audit_density_score} "
                  f"({'under-audited' if candidate.under_audited else 'already audited'})")
+    if candidate.defillama_audit_count is not None:
+        lines.append(
+            f"- **DefiLlama audit count**: {candidate.defillama_audit_count} "
+            f"(from /protocol/{{slug}} detail)".replace("{slug}", candidate.defillama_slug or "")
+        )
+    if candidate.defillama_audit_note:
+        lines.append(f"- **DefiLlama audit note**: *{candidate.defillama_audit_note}*")
     if not candidate.audit_sources_found:
         lines.append("- **No audits found** in any checked source.")
     else:
@@ -296,6 +303,9 @@ def _frontmatter_dict(candidate: CandidateRecord) -> dict[str, Any]:
         "is_proxy": candidate.is_proxy,
         "proxy_impl_address": candidate.proxy_impl_address,
         "compiler_version": candidate.compiler_version,
+        # --- DefiLlama audit history deep enrichment ---
+        "defillama_audit_count": candidate.defillama_audit_count,
+        "defillama_audit_note": candidate.defillama_audit_note,
     }
 
 

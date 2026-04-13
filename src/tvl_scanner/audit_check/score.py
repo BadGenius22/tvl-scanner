@@ -37,9 +37,23 @@ UNDER_AUDITED_THRESHOLD = 2
 
 
 def _defillama_sources(candidate: EnrichedCandidate) -> list[AuditSource]:
-    """Build AuditSource entries from DefiLlama audit_links."""
+    """Build AuditSource entries from DefiLlama audit metadata.
+
+    Uses BOTH the flat catalog's audit_links AND the detail endpoint's audit
+    count (when available). The count can exceed the number of linked audits
+    if some audits are only referenced in prose — we trust DefiLlama's count
+    as the upper bound but cap at CAPS[DEFILLAMA] to prevent over-scoring.
+
+    Scoring: max(count, len(links)), capped at 3. Each unit = 1 AuditSource.
+    Prefer concrete URLs over phantom count-only entries when available.
+    """
+    cap = CAPS[AuditSourceKind.DEFILLAMA]
+    links = candidate.defillama_audit_links[:cap]
+    count = candidate.defillama_audit_count or 0
+
     sources: list[AuditSource] = []
-    for link in candidate.defillama_audit_links[: CAPS[AuditSourceKind.DEFILLAMA]]:
+    # First, emit AuditSource records for each concrete link (has URL)
+    for link in links:
         sources.append(
             AuditSource(
                 source=AuditSourceKind.DEFILLAMA,
@@ -47,6 +61,22 @@ def _defillama_sources(candidate: EnrichedCandidate) -> list[AuditSource]:
                 weight=1,
             )
         )
+
+    # If DefiLlama's integer count exceeds the number of links, add phantom
+    # URL-less records up to the cap. This captures protocols where an audit
+    # note says "audited by ToB in 2024" but the link list is empty.
+    if count > len(sources):
+        extra = min(count - len(sources), cap - len(sources))
+        note = candidate.defillama_audit_note
+        for _ in range(extra):
+            sources.append(
+                AuditSource(
+                    source=AuditSourceKind.DEFILLAMA,
+                    url=None,
+                    title=note[:80] if note else "DefiLlama audit (no link)",
+                    weight=1,
+                )
+            )
     return sources
 
 

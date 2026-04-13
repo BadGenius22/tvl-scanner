@@ -113,6 +113,16 @@ def _audit_links(dl_match: dict[str, Any] | None) -> list[str]:
     return [u for u in raw if isinstance(u, str) and u.startswith("http")]
 
 
+def _coerce_audit_count(raw: Any) -> int | None:
+    """DefiLlama reports `audits` as either int or stringified int. Normalize to int."""
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return None
+
+
 async def enrich_one(
     contract: DiscoveredContract,
     catalog: DefiLlamaCatalog,
@@ -123,6 +133,8 @@ async def enrich_one(
     dl_match = catalog.lookup(contract.protocol_guess or "") if contract.protocol_guess else None
 
     github_url = None
+    dl_audit_count: int | None = None
+    dl_audit_note: str | None = None
     if dl_match:
         github_field = dl_match.get("github")
         if isinstance(github_field, list) and github_field:
@@ -134,6 +146,21 @@ async def enrich_one(
             url_field = dl_match.get("url")
             if isinstance(url_field, str) and "github.com" in url_field:
                 github_url = url_field
+
+        # Pull deeper audit metadata from the /protocol/{slug} detail endpoint.
+        # This is the Batch D improvement: the flat catalog has `audits` as a
+        # count and `audit_links` but NO `audit_note`. Detail has all three.
+        slug = dl_match.get("slug")
+        if slug:
+            detail = await catalog.fetch_detail(str(slug), client=client)
+            if detail:
+                dl_audit_count = _coerce_audit_count(detail.get("audits"))
+                note_raw = detail.get("audit_note")
+                if isinstance(note_raw, str) and note_raw.strip():
+                    dl_audit_note = note_raw.strip()
+            # Fallback to the flat catalog's `audits` field if detail didn't help
+            if dl_audit_count is None:
+                dl_audit_count = _coerce_audit_count(dl_match.get("audits"))
 
     repo_metadata: RepoMetadata | None = None
     if github_url:
@@ -177,6 +204,8 @@ async def enrich_one(
         bounty_max_payout_usd=bounty_payout,
         defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
         defillama_audit_links=_audit_links(dl_match),
+        defillama_audit_count=dl_audit_count,
+        defillama_audit_note=dl_audit_note,
         github_audits_folder_exists=bool(
             repo_metadata and repo_metadata.audits_folder_exists
         ),
