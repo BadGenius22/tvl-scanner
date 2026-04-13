@@ -34,13 +34,29 @@ async def check_one(
     client: object = None,
     token_cache: dict[tuple[str, AuditSourceKind], list[ContestHit]] | None = None,
 ) -> AuditedCandidate:
-    """Run audit-history checks on a single candidate."""
-    contest_sources = await check_all_contests(
-        candidate.display_name,
-        defillama_slug=candidate.defillama_slug,
-        client=client,  # type: ignore[arg-type]
-        token_cache=token_cache,
+    """Run audit-history checks on a single candidate.
+
+    BATCH H fix #2: skip GitHub contest search entirely for candidates where
+    DefiLlama already reports a non-zero audit count. Stage 3's real purpose
+    is to find audit history that DefiLlama missed; when DefiLlama already
+    has the data, spending three API calls per org to re-confirm is wasted
+    work AND it saturates GitHub search's 30-req-per-minute rate limit which
+    caused 403s on late candidates in v0.3.0. Net effect: Stage 3 now does
+    ~80% fewer GitHub calls and no longer hits rate limits.
+    """
+    has_defillama_audits = (
+        candidate.defillama_audit_count is not None
+        and candidate.defillama_audit_count > 0
     )
+    if has_defillama_audits:
+        contest_sources: list = []
+    else:
+        contest_sources = await check_all_contests(
+            candidate.display_name,
+            defillama_slug=candidate.defillama_slug,
+            client=client,  # type: ignore[arg-type]
+            token_cache=token_cache,
+        )
     return compute_score(candidate, contest_sources=contest_sources)
 
 

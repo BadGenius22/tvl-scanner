@@ -35,6 +35,14 @@ def _setup_logging(level: str) -> None:
         datefmt="[%X]",
         handlers=[RichHandler(console=console, rich_tracebacks=True, show_path=False)],
     )
+    # BATCH H fix #3: quieter HTTP logs. httpx logs every single request at
+    # INFO level which buries the useful stage-boundary + summary lines in a
+    # ~5000-line wall of "HTTP Request: GET ... 200 OK". Move httpx and
+    # httpcore to WARNING so normal INFO runs are skimmable. Users who want
+    # the full HTTP trace can pass --log-level DEBUG.
+    if level.upper() != "DEBUG":
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 @app.command()
