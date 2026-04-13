@@ -1,0 +1,71 @@
+"""Top-level pipeline orchestrator.
+
+Runs all four stages in sequence, writing intermediate JSON artifacts at each
+boundary so a failure mid-pipeline does not lose the work already done:
+
+    Stage 1 → artifacts/candidates.json
+    Stage 2 → artifacts/enriched.json
+    Stage 3 → artifacts/audit_status.json
+    Stage 4 → reports/YYYY-MM-DD-scan.md + reports/YYYY-MM-DD-scan/candidates/
+
+Each stage reads its input from memory (not disk) during a single run. The
+disk artifacts are a debugging/inspection aid, not a hand-off mechanism.
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import date
+from pathlib import Path
+
+from tvl_scanner.audit_check.checker import check_all, write_audit_status
+from tvl_scanner.discover.merge import discover_all, write_candidates
+from tvl_scanner.enrich.enricher import enrich_all, write_enriched
+from tvl_scanner.models import Chain
+from tvl_scanner.rank.priority import rank_all
+from tvl_scanner.rank.report import write_report
+
+log = logging.getLogger(__name__)
+
+
+async def run_pipeline(
+    chains: list[Chain] | None = None,
+    *,
+    scan_date: date | None = None,
+    cutoff: float = 5.0,
+    cap: int = 50,
+) -> Path:
+    """Run the full four-stage pipeline. Returns the summary report path."""
+    scan_date = scan_date or date.today()
+
+    log.info("=== Stage 1: Discover ===")
+    discovered = await discover_all(chains, scan_date=scan_date)
+    write_candidates(discovered)
+    log.info("discovered %d candidates above threshold", len(discovered))
+    if not discovered:
+        log.warning("no candidates discovered — nothing to do")
+        return Path("/dev/null")
+
+    log.info("=== Stage 2: Enrich ===")
+    enriched = await enrich_all(discovered)
+    write_enriched(enriched)
+    log.info("enriched %d candidates", len(enriched))
+
+    log.info("=== Stage 3: Audit-check ===")
+    audited = await check_all(enriched)
+    write_audit_status(audited)
+    n_under = sum(1 for a in audited if a.under_audited)
+    log.info("audit-check: %d / %d are under-audited", n_under, len(audited))
+
+    log.info("=== Stage 4: Rank + Report ===")
+    ranked = rank_all(audited, scan_date=scan_date, cutoff=cutoff, cap=cap)
+    summary_path, candidate_paths = write_report(ranked, scan_date)
+    log.info(
+        "ranked %d candidates (cutoff=%.1f, cap=%d); wrote %d per-candidate files",
+        len(ranked),
+        cutoff,
+        cap,
+        len(candidate_paths),
+    )
+    log.info("summary report: %s", summary_path)
+    return summary_path

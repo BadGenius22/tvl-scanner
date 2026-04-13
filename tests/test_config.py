@@ -52,7 +52,7 @@ def test_get_secret_missing_required_raises() -> None:
     get_secret.cache_clear()
     with patch.dict(os.environ, {}, clear=True):
         with patch("tvl_scanner.config.shutil.which", return_value=None):
-            with pytest.raises(SecretsError, match="not found in pass"):
+            with pytest.raises(SecretsError, match="not found"):
                 get_secret("nonexistent_key", required=True)
 
 

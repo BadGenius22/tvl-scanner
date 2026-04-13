@@ -45,6 +45,7 @@ def get_secret(name: str, *, required: bool = True) -> str | None:
     Returns:
         The secret string, stripped of trailing whitespace, or None.
     """
+    pass_error: str | None = None
     if shutil.which("pass"):
         try:
             result = subprocess.run(
@@ -57,8 +58,16 @@ def get_secret(name: str, *, required: bool = True) -> str | None:
             secret = result.stdout.strip()
             if secret:
                 return secret
-        except subprocess.CalledProcessError:
-            pass  # pass entry does not exist; fall through to env
+        except subprocess.CalledProcessError as exc:
+            # Distinguish "entry does not exist" from "gpg decryption failed".
+            # GPG errors are surfaced so the user can fix pinentry / cache issues.
+            stderr = (exc.stderr or "").lower()
+            if "decryption failed" in stderr or "no such file or directory" in stderr:
+                pass_error = (
+                    f"pass entry exists but GPG decryption failed — likely gpg-agent needs "
+                    f"a fresh passphrase. Run this once in a terminal with a TTY: "
+                    f"`pass show tvl-scanner/{name} >/dev/null`"
+                )
         except subprocess.TimeoutExpired as exc:
             raise SecretsError(
                 f"pass show tvl-scanner/{name} timed out — is gpg-agent stuck?"
@@ -70,10 +79,14 @@ def get_secret(name: str, *, required: bool = True) -> str | None:
         return env_value.strip()
 
     if required:
-        raise SecretsError(
-            f"Required secret 'tvl-scanner/{name}' not found in pass or ${env_name}. "
-            f"Store it via: pass insert --echo tvl-scanner/{name}"
+        base_msg = (
+            f"Required secret 'tvl-scanner/{name}' not found. "
+            f"Store it via: pass insert --echo tvl-scanner/{name} "
+            f"(or set ${env_name})."
         )
+        if pass_error:
+            raise SecretsError(f"{base_msg}\n  Hint: {pass_error}")
+        raise SecretsError(base_msg)
     return None
 
 

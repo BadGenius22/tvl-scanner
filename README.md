@@ -39,6 +39,20 @@ Verify:
 pass ls tvl-scanner/
 ```
 
+**GPG cache note for WSL**: the scanner runs in a non-TTY subprocess so it cannot prompt for your GPG passphrase. Unlock the cache once per day from a real terminal:
+
+```bash
+pass show tvl-scanner/github >/dev/null   # one-time passphrase entry
+```
+
+gpg-agent is configured with `default-cache-ttl 28800` and `max-cache-ttl 86400` (see `~/.gnupg/gpg-agent.conf`), so after that one interactive unlock the scanner can read every `tvl-scanner/*` entry for the next 8-24 hours without prompting.
+
+Verify the cache is primed:
+
+```bash
+tvl-scanner check-secrets   # should show ✓ for all configured keys
+```
+
 ## Usage
 
 ```bash
