@@ -1,0 +1,68 @@
+{
+  "data": [
+    {
+      "id": "arbitrum_0xABC123",
+      "type": "pool",
+      "attributes": {
+        "address": "0xABC123def4567890abc123def4567890abc12301",
+        "name": "FOO / USDC",
+        "pool_created_at": "2026-03-15T08:00:00Z",
+        "reserve_in_usd": "250000.5",
+        "base_token_price_usd": "0.42",
+        "transactions": {
+          "h24": {
+            "buys": 300,
+            "sells": 250,
+            "buyers": 120,
+            "sellers": 95
+          }
+        },
+        "volume_usd": {"h24": "500000"}
+      },
+      "relationships": {
+        "dex": {"data": {"id": "camelot-v3", "type": "dex"}}
+      }
+    },
+    {
+      "id": "arbitrum_0xDEAD",
+      "type": "pool",
+      "attributes": {
+        "address": "0xDEADbeefDEADbeefDEADbeefDEADbeefDEADbeef",
+        "name": "DUSTY / ETH",
+        "pool_created_at": "2026-03-20T10:00:00Z",
+        "reserve_in_usd": "500.0",
+        "base_token_price_usd": "0.0001",
+        "transactions": {
+          "h24": {"buys": 1, "sells": 0, "buyers": 1, "sellers": 0}
+        },
+        "volume_usd": {"h24": "50"}
+      },
+      "relationships": {
+        "dex": {"data": {"id": "sushiswap", "type": "dex"}}
+      }
+    },
+    {
+      "id": "arbitrum_0xFAT",
+      "type": "pool",
+      "attributes": {
+        "address": "0xFA7CAFE000000000000000000000000000000001",
+        "name": "LEVERAGE-VAULT / USDC",
+        "pool_created_at": "2026-04-01T12:00:00Z",
+        "reserve_in_usd": "1500000",
+        "base_token_price_usd": "1.01",
+        "transactions": {
+          "h24": {"buys": 50, "sells": 30, "buyers": 30, "sellers": 20}
+        },
+        "volume_usd": {"h24": "750000"}
+      },
+      "relationships": {
+        "dex": {"data": {"id": "uniswap-v3", "type": "dex"}}
+      }
+    }
+  ],
+  "included": [
+    {"id": "camelot-v3", "type": "dex", "attributes": {"name": "Camelot V3"}},
+    {"id": "sushiswap", "type": "dex", "attributes": {"name": "SushiSwap"}},
+    {"id": "uniswap-v3", "type": "dex", "attributes": {"name": "Uniswap V3"}}
+  ]
+}

@@ -62,7 +62,7 @@ class AuditSource(BaseModel):
 
     source: AuditSourceKind
     url: HttpUrl | None = None
-    date: date | None = None
+    published_at: date | None = None
     title: str | None = None
     weight: int = Field(default=1, ge=0, description="Points contributed to audit_density_score")
 
