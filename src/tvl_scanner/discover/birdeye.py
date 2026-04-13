@@ -1,15 +1,21 @@
-"""Birdeye token/pair discovery.
+"""Birdeye new-listing token discovery.
 
 Birdeye's public API requires an API key in the `X-API-KEY` header and the
 chain in the `x-chain` header. Free tier is ~30 req/min, so each run should
-stay well under that bound — we make a single paginated call per chain.
+stay well under that bound — we make a single call per chain.
 
-Endpoint: `/defi/v3/pair/list` (preferred when available) or `/defi/tokenlist`
-(fallback). Chain header values are lowercase canonical: `solana`, `ethereum`,
-`arbitrum`, `base`, `bsc`, `optimism`, `polygon`.
+Endpoint: `/defi/v2/tokens/new_listing` — returns recently-listed tokens
+(within the requested time window) with liquidity, creation time, and source.
+Chain header values are lowercase canonical: `solana`, `ethereum`, `arbitrum`,
+`base`, `bsc`, `optimism`, `polygon`.
 
-Birdeye's strength vs GeckoTerminal is Solana depth. On EVM chains we keep
-calls lean (one page) since GeckoTerminal already covers them well.
+BATCH G FIX #1: v1 used `/defi/v3/pair/list` which returned HTTP 404 on every
+call — that endpoint path does not exist in Birdeye's public API. Switched
+to `new_listing` which is documented and stable.
+
+Birdeye's strength vs GeckoTerminal is Solana depth, especially for fresh
+tokens. On EVM chains we still call it but expect fewer useful results since
+most EVM fresh-pool discovery flows through GeckoTerminal.
 """
 
 from __future__ import annotations
@@ -37,17 +43,32 @@ CHAIN_TO_BIRDEYE: dict[Chain, str] = {
 }
 
 
-def _parse_pair(pair: dict, chain: Chain) -> DiscoveredContract | None:
-    """Parse one pair/pool record. Returns None if below threshold or malformed."""
+def _parse_token(item: dict, chain: Chain) -> DiscoveredContract | None:
+    """Parse one new_listing token record. Returns None if below threshold or malformed.
+
+    Field names are defensive — Birdeye has historically changed field names
+    across API versions without migration paths. Try multiple keys for each
+    logical field.
+    """
     s = settings()
     try:
-        address = pair.get("address") or pair.get("pool_address") or pair.get("id")
-        liquidity = pair.get("liquidity") or pair.get("liquidity_usd") or pair.get("tvl")
+        address = (
+            item.get("address")
+            or item.get("tokenAddress")
+            or item.get("mint")
+        )
+        liquidity = (
+            item.get("liquidity")
+            or item.get("liquidityUSD")
+            or item.get("liquidity_usd")
+            or item.get("tvl")
+        )
         created_at_raw = (
-            pair.get("created_at")
-            or pair.get("createdAt")
-            or pair.get("created_time")
-            or pair.get("first_traded_at")
+            item.get("liquidityAddedAt")
+            or item.get("createdAt")
+            or item.get("created_at")
+            or item.get("createdTime")
+            or item.get("created_time")
         )
         if not address or liquidity is None:
             return None
@@ -57,18 +78,19 @@ def _parse_pair(pair: dict, chain: Chain) -> DiscoveredContract | None:
             return None
 
         if isinstance(created_at_raw, (int, float)):
-            # Unix timestamp
             first_seen = datetime.fromtimestamp(float(created_at_raw)).date()
         elif isinstance(created_at_raw, str):
             first_seen = datetime.fromisoformat(
                 created_at_raw.replace("Z", "+00:00")
             ).date()
         else:
-            # No reliable creation date — skip so the freshness filter has real data
             return None
 
-        dex_name = pair.get("source") or pair.get("dex") or pair.get("exchange")
-        protocol_guess = str(dex_name) if dex_name else None
+        symbol = item.get("symbol") or item.get("name")
+        source_name = item.get("source") or item.get("dex") or item.get("exchange")
+        # Prefer the DEX source as protocol_guess if available; fall back to
+        # the token symbol so downstream name-matching has something to use.
+        protocol_guess = str(source_name) if source_name else (str(symbol) if symbol else None)
 
         return DiscoveredContract(
             chain=chain,
@@ -76,22 +98,26 @@ def _parse_pair(pair: dict, chain: Chain) -> DiscoveredContract | None:
             protocol_guess=protocol_guess,
             tvl_usd=tvl_usd,
             first_seen=first_seen,
-            unique_users_30d=None,  # Birdeye pair list does not expose user counts
+            unique_users_30d=None,
             source=DiscoverySource.BIRDEYE,
         )
     except (ValueError, TypeError, KeyError) as exc:
-        log.warning("Birdeye: failed to parse pair: %s", exc)
+        log.warning("Birdeye: failed to parse item: %s", exc)
         return None
 
 
 async def fetch_top_pairs(
-    chain: Chain, *, client: httpx.AsyncClient | None = None, limit: int = 100
+    chain: Chain, *, client: httpx.AsyncClient | None = None, limit: int = 20
 ) -> list[DiscoveredContract]:
-    """Fetch top pairs by liquidity on `chain` from Birdeye.
+    """Fetch recently-listed tokens above the TVL threshold from Birdeye.
 
     Silently returns [] if the Birdeye API key is not configured — this makes
     Birdeye an optional enhancement, not a hard dependency. GeckoTerminal still
     provides full coverage if Birdeye is skipped.
+
+    Note: function name is historical (`fetch_top_pairs`). It now actually
+    queries the `/defi/v2/tokens/new_listing` endpoint which returns TOKENS
+    not pairs. The naming is preserved to avoid touching every import site.
     """
     s = settings()
     if chain not in CHAIN_TO_BIRDEYE:
@@ -108,12 +134,12 @@ async def fetch_top_pairs(
         "x-chain": CHAIN_TO_BIRDEYE[chain],
         "accept": "application/json",
     }
-    url = f"{s.BIRDEYE_BASE}/defi/v3/pair/list"
+    url = f"{s.BIRDEYE_BASE}/defi/v2/tokens/new_listing"
 
     try:
         payload = await get_json(
             url,
-            params={"sort_by": "liquidity", "sort_type": "desc", "limit": limit, "offset": 0},
+            params={"limit": limit},
             headers=headers,
             client=client,
         )
@@ -122,23 +148,28 @@ async def fetch_top_pairs(
         return []
 
     # Response shape varies by Birdeye API version. Be defensive.
-    raw_pairs: list[dict] = []
+    raw_items: list[dict] = []
     if isinstance(payload, dict):
         data = payload.get("data")
         if isinstance(data, dict):
-            raw_pairs = data.get("items") or data.get("pairs") or []
+            raw_items = data.get("items") or data.get("tokens") or data.get("pairs") or []
         elif isinstance(data, list):
-            raw_pairs = data
+            raw_items = data
     elif isinstance(payload, list):
-        raw_pairs = payload
+        raw_items = payload
 
     results: list[DiscoveredContract] = []
-    for pair in raw_pairs:
+    for item in raw_items:
         if len(results) >= s.MAX_CANDIDATES_PER_SOURCE:
             break
-        rec = _parse_pair(pair, chain)
+        rec = _parse_token(item, chain)
         if rec:
             results.append(rec)
 
-    log.info("Birdeye %s: %d pairs above $%d threshold", chain.value, len(results), s.MIN_TVL_USD)
+    log.info(
+        "Birdeye %s: %d new listings above $%d threshold",
+        chain.value,
+        len(results),
+        s.MIN_TVL_USD,
+    )
     return results

@@ -129,11 +129,20 @@ async def check_all_contests(
     *,
     defillama_slug: str | None = None,
     client: httpx.AsyncClient | None = None,
+    token_cache: dict[tuple[str, AuditSourceKind], list[ContestHit]] | None = None,
 ) -> list[AuditSource]:
     """Search all three contest orgs for audit history matching this protocol.
 
     Tries multiple query tokens (display name, defillama slug) and merges hits
     by repo full_name to avoid double-counting.
+
+    BATCH G FIX #3: takes an optional `token_cache` shared across all candidates
+    in a scan. GitHub's search API has a 30-req-per-minute rate limit per
+    authenticated user (SEPARATE from the 5000/hr core API limit). With ~150
+    candidates × 3 orgs = 450 calls we saturate the per-minute bucket mid-scan
+    and get 403 for the remainder. Caching by (token, org) means that
+    protocols sharing a brand name (e.g., "aave", "aave-v2", "aave-v3" all
+    normalize to "aave") only cost one HTTP round-trip total.
     """
     tokens: set[str] = set()
     primary = _normalize_query(display_name)
@@ -146,18 +155,34 @@ async def check_all_contests(
     if not tokens:
         return []
 
-    # For each (token, org) pair, spawn a search task.
+    # For each (token, org) pair, look up in cache or spawn a search task.
+    all_hits: list[list[ContestHit]] = []
+    task_keys: list[tuple[str, AuditSourceKind]] = []
     tasks: list[asyncio.Task[list[ContestHit]]] = []
+
     for token in tokens:
         for kind in AUDIT_ORGS:
-            tasks.append(asyncio.create_task(search_org(token, kind, client=client)))
-    all_hits = await asyncio.gather(*tasks, return_exceptions=True)
+            key = (token, kind)
+            if token_cache is not None and key in token_cache:
+                all_hits.append(token_cache[key])
+            else:
+                task_keys.append(key)
+                tasks.append(asyncio.create_task(search_org(token, kind, client=client)))
+
+    if tasks:
+        task_results = await asyncio.gather(*tasks, return_exceptions=True)
+        for key, result in zip(task_keys, task_results):
+            if isinstance(result, BaseException):
+                hits: list[ContestHit] = []
+            else:
+                hits = result
+            if token_cache is not None:
+                token_cache[key] = hits
+            all_hits.append(hits)
 
     seen_repos: set[str] = set()
     results: list[AuditSource] = []
     for hits in all_hits:
-        if isinstance(hits, BaseException):
-            continue
         for hit in hits:
             if hit.repo_full_name in seen_repos:
                 continue

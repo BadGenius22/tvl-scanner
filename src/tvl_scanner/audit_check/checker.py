@@ -19,23 +19,27 @@ import json
 import logging
 from pathlib import Path
 
-from tvl_scanner.audit_check.contests import check_all_contests
+from tvl_scanner.audit_check.contests import ContestHit, check_all_contests
 from tvl_scanner.audit_check.score import compute_score
 from tvl_scanner.config import settings
 from tvl_scanner.http import make_client
-from tvl_scanner.models import AuditedCandidate, EnrichedCandidate
+from tvl_scanner.models import AuditedCandidate, AuditSourceKind, EnrichedCandidate
 
 log = logging.getLogger(__name__)
 
 
 async def check_one(
-    candidate: EnrichedCandidate, *, client: object = None
+    candidate: EnrichedCandidate,
+    *,
+    client: object = None,
+    token_cache: dict[tuple[str, AuditSourceKind], list[ContestHit]] | None = None,
 ) -> AuditedCandidate:
     """Run audit-history checks on a single candidate."""
     contest_sources = await check_all_contests(
         candidate.display_name,
         defillama_slug=candidate.defillama_slug,
         client=client,  # type: ignore[arg-type]
+        token_cache=token_cache,
     )
     return compute_score(candidate, contest_sources=contest_sources)
 
@@ -43,17 +47,30 @@ async def check_one(
 async def check_all(
     candidates: list[EnrichedCandidate],
 ) -> list[AuditedCandidate]:
-    """Run Stage 3 on the full enriched list with bounded concurrency."""
+    """Run Stage 3 on the full enriched list with bounded concurrency.
+
+    BATCH G FIX #3: uses a per-scan token cache shared across all candidates.
+    Protocols sharing a brand token (Aave / Aave V2 / Aave V3 all normalize
+    to 'aave') cost only one HTTP round-trip. Concurrency also lowered from
+    5 to 2 because GitHub search API has a 30/min rate limit separate from
+    the 5000/hr core API.
+    """
+    token_cache: dict[tuple[str, AuditSourceKind], list[ContestHit]] = {}
     async with make_client() as client:
-        # GitHub search is rate-limited to 30/min for the search endpoint.
-        # Keep concurrency low so we don't burst over the bucket.
-        sem = asyncio.Semaphore(5)
+        sem = asyncio.Semaphore(2)
 
         async def _bounded(c: EnrichedCandidate) -> AuditedCandidate:
             async with sem:
-                return await check_one(c, client=client)
+                return await check_one(c, client=client, token_cache=token_cache)
 
         results = await asyncio.gather(*(_bounded(c) for c in candidates))
+
+    log.info(
+        "audit-check: token_cache held %d unique (token,org) pairs — "
+        "saved ~%d api calls",
+        len(token_cache),
+        max(0, len(candidates) * 3 * 2 - len(token_cache)),
+    )
 
     n_under = sum(1 for r in results if r.under_audited)
     log.info("audit-check: %d/%d candidates under-audited", n_under, len(results))

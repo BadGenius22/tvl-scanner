@@ -193,3 +193,108 @@
   platform: immunefi
   url: https://immunefi.com/bounty/polygon/
   max_payout_usd: 2500000
+
+# Batch G additions — protocols that surfaced in the first real scan and
+# should have been bounty-matched but weren't.
+
+- name: Hyperlane
+  slugs: [hyperlane, hyperlane-nexus]
+  platform: immunefi
+  url: https://immunefi.com/bounty/hyperlane/
+  max_payout_usd: 2500000
+
+- name: Spark
+  slugs: [spark, spark-savings, spark-protocol, sparklend]
+  platform: immunefi
+  url: https://immunefi.com/bounty/spark/
+  max_payout_usd: 5000000
+
+- name: Synapse Protocol
+  slugs: [synapse, synapse-protocol]
+  platform: immunefi
+  url: https://immunefi.com/bounty/synapseprotocol/
+  max_payout_usd: 1000000
+
+- name: Maple Finance
+  slugs: [maple, maple-finance, maple-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/maplefinance/
+  max_payout_usd: 500000
+
+- name: Venus Protocol
+  slugs: [venus, venus-finance]
+  platform: immunefi
+  url: https://immunefi.com/bounty/venusprotocol/
+  max_payout_usd: 1000000
+
+- name: Convex Finance
+  slugs: [convex, convex-finance]
+  platform: immunefi
+  url: https://immunefi.com/bounty/convexfinance/
+  max_payout_usd: 1000000
+
+- name: Yearn Finance
+  slugs: [yearn, yearn-finance, yearn-v3]
+  platform: immunefi
+  url: https://immunefi.com/bounty/yearnfinance/
+  max_payout_usd: 200000
+
+- name: 1inch
+  slugs: [1inch, oneinch, oneinch-network]
+  platform: immunefi
+  url: https://immunefi.com/bounty/1inch/
+  max_payout_usd: 500000
+
+- name: dYdX
+  slugs: [dydx, dydx-v4, dydx-chain]
+  platform: immunefi
+  url: https://immunefi.com/bounty/dydx/
+  max_payout_usd: 5000000
+
+- name: Beefy Finance
+  slugs: [beefy, beefy-finance]
+  platform: immunefi
+  url: https://immunefi.com/bounty/beefyfinance/
+  max_payout_usd: 100000
+
+- name: Hop Protocol
+  slugs: [hop, hop-protocol, hop-exchange]
+  platform: immunefi
+  url: https://immunefi.com/bounty/hopprotocol/
+  max_payout_usd: 1000000
+
+- name: PancakeSwap
+  slugs: [pancakeswap, pancake, pancake-swap, cake]
+  platform: immunefi
+  url: https://immunefi.com/bounty/pancakeswap/
+  max_payout_usd: 100000
+
+- name: Yield Yak
+  slugs: [yield-yak, yield-yak-aggregator, yieldyak]
+  platform: immunefi
+  url: https://immunefi.com/bounty/yieldyak/
+  max_payout_usd: 100000
+
+- name: Stargate
+  slugs: [stargate, stargate-finance, stargate-v2]
+  platform: immunefi
+  url: https://immunefi.com/bounty/stargate/
+  max_payout_usd: 2000000
+
+- name: Renzo Protocol
+  slugs: [renzo, renzo-protocol, ezeth]
+  platform: immunefi
+  url: https://immunefi.com/bounty/renzoprotocol/
+  max_payout_usd: 1000000
+
+- name: EtherFi
+  slugs: [etherfi, ether-fi, weeth]
+  platform: immunefi
+  url: https://immunefi.com/bounty/etherfi/
+  max_payout_usd: 1000000
+
+- name: Puffer Finance
+  slugs: [puffer, puffer-finance, pufeth]
+  platform: immunefi
+  url: https://immunefi.com/bounty/pufferfinance/
+  max_payout_usd: 1500000

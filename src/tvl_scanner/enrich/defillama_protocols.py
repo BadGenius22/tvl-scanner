@@ -32,6 +32,16 @@ from tvl_scanner.config import settings
 from tvl_scanner.enrich import bounty
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.github import enrich_repo
+
+
+def _coerce_audit_count(raw: Any) -> int | None:
+    """Normalize DefiLlama `audits` field (int or stringified int) → int."""
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        return None
 from tvl_scanner.models import (
     Chain,
     DiscoverySource,
@@ -186,10 +196,38 @@ async def discover_from_defillama_catalog(
 
             name = str(protocol.get("name") or slug)
 
+            # BATCH G FIX #4: always fetch detail for audit_count, audit_note,
+            # and a fallback github URL that the flat catalog often omits.
+            # Without this, 138/141 catalog candidates had null LOC, null audit
+            # count, and never ran GitHub enrichment at all — the single biggest
+            # quality issue from the first real scan.
+            detail = await catalog.fetch_detail(slug, client=client)
+
+            dl_audit_count: int | None = None
+            dl_audit_note: str | None = None
+            if detail:
+                dl_audit_count = _coerce_audit_count(detail.get("audits"))
+                note_raw = detail.get("audit_note")
+                if isinstance(note_raw, str) and note_raw.strip():
+                    dl_audit_note = note_raw.strip()
+            if dl_audit_count is None:
+                dl_audit_count = _coerce_audit_count(protocol.get("audits"))
+
+            # github_url resolution: flat catalog → detail → None
             github_url = _extract_github_url(protocol)
+            if not github_url and detail:
+                github_url = _extract_github_url(detail)
+
             repo_metadata = None
             if github_url:
                 repo_metadata = await enrich_repo(github_url, client=client)
+
+            # Also merge audit_links from detail with the flat catalog's set
+            merged_audit_links = _audit_links(protocol)
+            if detail:
+                for link in _audit_links(detail):
+                    if link not in merged_audit_links:
+                        merged_audit_links.append(link)
 
             # Build the EnrichedCandidate directly — this source skips Stage 1
             languages: list[Language] = [CHAIN_DEFAULT_LANG[chain]]
@@ -231,7 +269,9 @@ async def discover_from_defillama_catalog(
                     bounty_url=bounty_url,  # type: ignore[arg-type]
                     bounty_max_payout_usd=bounty_payout,
                     defillama_slug=slug,
-                    defillama_audit_links=_audit_links(protocol),  # type: ignore[arg-type]
+                    defillama_audit_links=merged_audit_links,  # type: ignore[arg-type]
+                    defillama_audit_count=dl_audit_count,
+                    defillama_audit_note=dl_audit_note,
                     github_audits_folder_exists=bool(
                         repo_metadata and repo_metadata.audits_folder_exists
                     ),

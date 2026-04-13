@@ -69,9 +69,17 @@ BLOCK_TIME_SECONDS: dict[Chain, float] = {
 
 # Tunables. Kept as module constants rather than in Settings so they don't
 # pollute the non-secret .env file.
+#
+# BATCH G FIX #2: v1 used sample_blocks=50 + concurrency 10/20 which saturated
+# Alchemy's free-tier compute unit budget (300 CU/sec, ~10 req/s sustained).
+# Lowered to 25/3/5 so a full-chain run stays under the bucket and actually
+# completes. The tradeoff: ~half the sample coverage, but we were catching 0
+# candidates anyway with the old settings due to 429 storms, so this is
+# strictly better until we move to a paid tier.
 DEFAULT_LOOKBACK_DAYS = 7
-DEFAULT_SAMPLE_BLOCKS = 50
-BALANCE_CHECK_CONCURRENCY = 20
+DEFAULT_SAMPLE_BLOCKS = 25
+RECEIPT_CONCURRENCY = 3
+BALANCE_CHECK_CONCURRENCY = 5
 
 
 def _alchemy_url(chain: Chain) -> str | None:
@@ -213,7 +221,7 @@ async def fetch_fresh_deployments(
         )
 
         # Step 2: fetch receipts per sampled block in parallel with bounded concurrency
-        receipt_sem = asyncio.Semaphore(10)
+        receipt_sem = asyncio.Semaphore(RECEIPT_CONCURRENCY)
 
         async def _bounded_receipts(block_num: int) -> tuple[int, list[dict]]:
             async with receipt_sem:
