@@ -19,6 +19,7 @@ in the plan file — field names are the handoff contract with the vault.
 from __future__ import annotations
 
 import logging
+import shutil
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -366,14 +367,28 @@ def write_report(
     """Write both the summary report and per-candidate files.
 
     Returns (summary_path, candidate_file_paths).
+
+    BUGFIX (post-Batch I.2): the per-candidate directory is purged before
+    writing new files. Without this, multiple scans on the same date
+    accumulated files like `01-pendle.md` (v0.4.0) + `01-jagpool-staked-sol.md`
+    (v0.4.1) side-by-side, making the folder visually misleading even
+    though the summary table was correct. The cleanup wipes the
+    `<scan_slug>/candidates/` subdirectory entirely before recreating it.
+    The summary `.md` itself is naturally overwritten so doesn't need
+    explicit cleanup.
     """
     s = settings()
     reports_dir = reports_dir or s.reports_path
     reports_dir.mkdir(parents=True, exist_ok=True)
     scan_slug = f"{scan_date.isoformat()}-scan"
 
-    # Per-candidate files
+    # Purge stale per-candidate files from prior scans on the same date.
     out_dir = reports_dir / scan_slug
+    candidates_dir = out_dir / "candidates"
+    if candidates_dir.exists():
+        shutil.rmtree(candidates_dir)
+
+    # Per-candidate files
     candidate_paths: list[Path] = []
     for i, candidate in enumerate(candidates, start=1):
         candidate_paths.append(write_candidate_file(candidate, i, out_dir))
