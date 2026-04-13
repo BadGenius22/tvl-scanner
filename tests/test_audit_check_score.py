@@ -1,0 +1,126 @@
+"""Tests for audit density scoring."""
+
+from __future__ import annotations
+
+from datetime import date
+
+from tvl_scanner.audit_check.score import (
+    UNDER_AUDITED_THRESHOLD,
+    _defillama_sources,
+    _github_folder_source,
+    compute_score,
+)
+from tvl_scanner.models import (
+    AuditSource,
+    AuditSourceKind,
+    Chain,
+    DiscoverySource,
+    EnrichedCandidate,
+    Language,
+)
+
+
+def _enriched(
+    *,
+    defillama_audit_links: list[str] | None = None,
+    github_audits_folder_exists: bool = False,
+    github_repo: str | None = None,
+) -> EnrichedCandidate:
+    return EnrichedCandidate(
+        chain=Chain.ARBITRUM,
+        address="0xABC",
+        tvl_usd=250000,
+        first_seen=date(2026, 3, 15),
+        source=DiscoverySource.GECKOTERMINAL,
+        target_name="test-protocol",
+        display_name="Test Protocol",
+        protocol_type="unknown protocol on arbitrum",
+        languages=[Language.SOLIDITY],
+        github_repo=github_repo,  # type: ignore[arg-type]
+        defillama_audit_links=defillama_audit_links or [],  # type: ignore[arg-type]
+        github_audits_folder_exists=github_audits_folder_exists,
+    )
+
+
+def test_defillama_sources_capped_at_3() -> None:
+    """More than 3 DefiLlama audit links should still only score 3 points."""
+    candidate = _enriched(
+        defillama_audit_links=[
+            "https://example.com/audit1.pdf",
+            "https://example.com/audit2.pdf",
+            "https://example.com/audit3.pdf",
+            "https://example.com/audit4.pdf",
+            "https://example.com/audit5.pdf",
+        ]
+    )
+    sources = _defillama_sources(candidate)
+    assert len(sources) == 3
+    assert all(s.weight == 1 for s in sources)
+
+
+def test_github_folder_source_requires_repo_url() -> None:
+    """Audits folder flag without a repo URL should produce nothing."""
+    candidate = _enriched(github_audits_folder_exists=True, github_repo=None)
+    assert _github_folder_source(candidate) == []
+
+
+def test_github_folder_source_emits_one_point() -> None:
+    candidate = _enriched(
+        github_audits_folder_exists=True,
+        github_repo="https://github.com/foo/bar",
+    )
+    sources = _github_folder_source(candidate)
+    assert len(sources) == 1
+    assert sources[0].weight == 1
+    assert str(sources[0].url).endswith("/tree/HEAD/audits")
+
+
+def test_compute_score_zero_for_empty_candidate() -> None:
+    candidate = _enriched()
+    result = compute_score(candidate, contest_sources=[])
+    assert result.audit_density_score == 0
+    assert result.under_audited is True
+
+
+def test_compute_score_full_signal_marks_not_under_audited() -> None:
+    """DefiLlama(3) + GitHub folder(1) + one C4 hit(3) = 7 points → not under-audited."""
+    candidate = _enriched(
+        defillama_audit_links=["https://example.com/a1.pdf", "https://example.com/a2.pdf"],
+        github_audits_folder_exists=True,
+        github_repo="https://github.com/foo/bar",
+    )
+    contest = [
+        AuditSource(
+            source=AuditSourceKind.CODE4RENA,
+            url="https://github.com/code-423n4/2024-01-foo",
+            weight=3,
+        )
+    ]
+    result = compute_score(candidate, contest_sources=contest)
+    # 2 DL links (capped at 3) + 1 github folder + 3 C4 = 6
+    assert result.audit_density_score == 6
+    assert result.under_audited is False
+
+
+def test_compute_score_borderline_case() -> None:
+    """Exactly 2 points (threshold) should be under_audited."""
+    candidate = _enriched(
+        defillama_audit_links=["https://example.com/a1.pdf"],
+        github_audits_folder_exists=True,
+        github_repo="https://github.com/foo/bar",
+    )
+    # DL(1) + GitHub folder(1) = 2, threshold = 2 → under_audited (<=)
+    result = compute_score(candidate)
+    assert result.audit_density_score == 2
+    assert result.under_audited is True
+    assert UNDER_AUDITED_THRESHOLD == 2
+
+
+def test_compute_score_preserves_enriched_fields() -> None:
+    """AuditedCandidate should carry all EnrichedCandidate fields unchanged."""
+    candidate = _enriched()
+    result = compute_score(candidate)
+    assert result.chain == candidate.chain
+    assert result.target_name == candidate.target_name
+    assert result.display_name == candidate.display_name
+    assert result.tvl_usd == candidate.tvl_usd

@@ -158,6 +158,9 @@ async def enrich_one(
         bounty_max_payout_usd=None,
         defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
         defillama_audit_links=_audit_links(dl_match),
+        github_audits_folder_exists=bool(
+            repo_metadata and repo_metadata.audits_folder_exists
+        ),
     )
 
 

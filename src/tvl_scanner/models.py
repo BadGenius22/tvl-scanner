@@ -105,6 +105,7 @@ class EnrichedCandidate(BaseModel):
     bounty_max_payout_usd: int | None = None
     defillama_slug: str | None = None
     defillama_audit_links: list[HttpUrl] = Field(default_factory=list)
+    github_audits_folder_exists: bool = False
 
 
 class AuditedCandidate(EnrichedCandidate):
