@@ -29,7 +29,10 @@ from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.evm_bytecode_check import check_bytecode_match
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
-from tvl_scanner.enrich.homepage_scrape import scrape_homepage_with_fallback
+from tvl_scanner.enrich.homepage_scrape import (
+    rank_github_urls_for_protocol,
+    scrape_homepage_with_fallback,
+)
 from tvl_scanner.enrich.ottersec import check_ottersec_verification
 from tvl_scanner.http import make_client
 from tvl_scanner.models import (
@@ -262,6 +265,28 @@ async def enrich_one(
                         weight=4,
                     )
                 )
+
+            # Fallback step in github_repo resolution: if DefiLlama and
+            # the curated registry both failed, try GitHub URLs found
+            # in the homepage HTML, ranked by name overlap with the slug.
+            if (repo_metadata is None or not repo_metadata.exists) and scrape.github_urls:
+                slug_for_rank = (
+                    str(dl_match.get("slug")) if dl_match and dl_match.get("slug") else None
+                )
+                ranked = rank_github_urls_for_protocol(
+                    scrape.github_urls,
+                    slug=slug_for_rank,
+                    display_name=display_name_for_scrape,
+                )
+                for candidate_gh in ranked[:3]:
+                    repo_metadata = await enrich_repo(candidate_gh, client=client)
+                    if repo_metadata and repo_metadata.exists:
+                        log.info(
+                            "github resolved via homepage scrape: %s for %s",
+                            candidate_gh,
+                            display_name_for_scrape or contract.address,
+                        )
+                        break
 
     languages = _derive_languages(contract.chain, repo_metadata)
 

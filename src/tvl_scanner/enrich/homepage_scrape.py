@@ -63,6 +63,41 @@ AUDIT_CONTEXT_PATTERN = re.compile(
     r"\b(audit|audited|security review|security assessment|reviewed by)\b", re.I
 )
 
+# GitHub URL extraction — pulled from page HTML when DefiLlama and the
+# curated registry both fail to provide a repo. Owners listed in
+# _GITHUB_OWNER_DENYLIST are ignored because their links almost never
+# represent the candidate's own source code (they're nav UI, common
+# dependency repos, or unrelated). Repo names in _GITHUB_REPO_DENYLIST
+# are likewise ignored even if the owner looks plausible.
+_GITHUB_URL_PATTERN = re.compile(
+    r"https?://github\.com/([A-Za-z0-9][A-Za-z0-9_.-]*)/([A-Za-z0-9][A-Za-z0-9_.-]*?)"
+    r"(?:\.git)?(?=[/\"'?#)\s<]|$)",
+    re.I,
+)
+_GITHUB_OWNER_DENYLIST: frozenset[str] = frozenset({
+    "sponsors", "orgs", "login", "marketplace", "codespaces", "features",
+    "pricing", "topics", "trending", "collections", "events", "about",
+    "site", "github", "explore", "settings", "notifications", "issues",
+    "pulls", "discussions", "search",
+    # Common dependency owners that appear in protocol homepages but
+    # almost certainly aren't the candidate's own code:
+    "openzeppelin", "ethereum", "aave", "uniswap", "compound-finance",
+    "transmissions11", "smartcontractkit", "trufflesuite", "foundry-rs",
+    "nomicfoundation",
+})
+_GITHUB_REPO_DENYLIST: frozenset[str] = frozenset({
+    "openzeppelin-contracts", "openzeppelin-contracts-upgradeable",
+    "solidity", "go-ethereum", "hardhat", "foundry", "forge-std",
+    # Non-code repos that protocol homepages frequently link to. We never
+    # want these stored as a candidate's `github_repo` because they don't
+    # contain auditable smart-contract source. Even when one of these is
+    # the ONLY GitHub link on a page (e.g. SYMM-IO/docs), it's better to
+    # leave github_repo null than mislead downstream consumers.
+    "docs", "documentation", "website", "site", "homepage", "landing",
+    "blog", "marketing", "frontend", "ui", "brand", "press-kit",
+})
+
+
 AUDIT_FIRM_PHRASES: dict[re.Pattern[str], str] = {
     re.compile(r"\btrail of bits\b", re.I): "trail_of_bits",
     re.compile(r"\bhalborn\b", re.I): "halborn",
@@ -92,9 +127,42 @@ class HomepageScrapeResult:
     fetched: bool
     wrapper_matches: list[str]   # tags from WRAPPER_PHRASES values
     audit_firm_matches: list[str]  # tags from AUDIT_FIRM_PHRASES values
+    github_urls: list[str]  # github.com/owner/repo URLs found in page HTML
 
 
-_EMPTY = HomepageScrapeResult(url="", fetched=False, wrapper_matches=[], audit_firm_matches=[])
+_EMPTY = HomepageScrapeResult(
+    url="", fetched=False, wrapper_matches=[], audit_firm_matches=[], github_urls=[]
+)
+
+
+def _extract_github_urls(html: str) -> list[str]:
+    """Pull github.com/<owner>/<repo> URLs from page HTML, filtered + deduped.
+
+    Order is preserved by first appearance. Capped at 10 candidates so a
+    blog/docs page with dozens of code links doesn't blow up the caller's
+    GitHub API budget.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[str] = []
+    for match in _GITHUB_URL_PATTERN.finditer(html):
+        owner = match.group(1).strip(".")
+        repo = match.group(2).strip(".")
+        if not owner or not repo:
+            continue
+        owner_lower = owner.lower()
+        repo_lower = repo.lower()
+        if owner_lower in _GITHUB_OWNER_DENYLIST:
+            continue
+        if repo_lower in _GITHUB_REPO_DENYLIST:
+            continue
+        key = (owner_lower, repo_lower)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(f"https://github.com/{owner}/{repo}")
+        if len(out) >= 10:
+            break
+    return out
 
 
 async def scrape_homepage(
@@ -120,13 +188,13 @@ async def scrape_homepage(
         response = await client.get(url)
         if response.status_code >= 400:
             return HomepageScrapeResult(
-                url=url, fetched=False, wrapper_matches=[], audit_firm_matches=[]
+                url=url, fetched=False, wrapper_matches=[], audit_firm_matches=[], github_urls=[]
             )
         html = response.text
     except (httpx.HTTPError, ValueError) as exc:
         log.debug("homepage scrape failed for %s: %s", url, exc)
         return HomepageScrapeResult(
-            url=url, fetched=False, wrapper_matches=[], audit_firm_matches=[]
+            url=url, fetched=False, wrapper_matches=[], audit_firm_matches=[], github_urls=[]
         )
     finally:
         if owns_client:
@@ -151,12 +219,58 @@ async def scrape_homepage(
             if pattern.search(sample):
                 audit_hits.add(tag)
 
+    github_urls = _extract_github_urls(sample)
+
     return HomepageScrapeResult(
         url=url,
         fetched=True,
         wrapper_matches=sorted(wrapper_hits),
         audit_firm_matches=sorted(audit_hits),
+        github_urls=github_urls,
     )
+
+
+def rank_github_urls_for_protocol(
+    urls: list[str], *, slug: str | None = None, display_name: str | None = None
+) -> list[str]:
+    """Rank scraped GitHub URLs by relevance to a known protocol identity.
+
+    Higher score when owner or repo name shares a token with the slug or
+    a slugified version of display_name. Used as a tie-breaker before
+    calling enrich_repo() — saves GitHub API calls by trying the most
+    likely match first.
+    """
+    tokens: set[str] = set()
+    if slug:
+        for t in re.split(r"[^a-z0-9]+", slug.lower()):
+            if len(t) >= 3 and t not in _DISPLAY_NAME_SUFFIXES:
+                tokens.add(t)
+    if display_name:
+        for t in re.split(r"[^a-z0-9]+", display_name.lower()):
+            if len(t) >= 3 and t not in _DISPLAY_NAME_SUFFIXES:
+                tokens.add(t)
+
+    def score(url: str) -> int:
+        match = re.search(r"github\.com/([^/]+)/([^/?#]+)", url, re.I)
+        if not match:
+            return 0
+        owner = match.group(1).lower()
+        repo = match.group(2).lower().rstrip(".git")
+        s = 0
+        for tok in tokens:
+            if tok == owner or tok == repo:
+                s += 4
+            elif tok in owner or tok in repo:
+                s += 2
+        # Prefer repos that look like contracts/protocol code over docs/site
+        if any(kw in repo for kw in ("contract", "core", "protocol", "v2", "v3", "v4", "smart")):
+            s += 1
+        if any(kw in repo for kw in ("docs", "website", "site", "frontend", "ui", "blog")):
+            s -= 1
+        return s
+
+    # Stable sort: preserve original order on ties (first-mentioned wins)
+    return sorted(urls, key=score, reverse=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

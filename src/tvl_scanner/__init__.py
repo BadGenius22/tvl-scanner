@@ -1,3 +1,3 @@
 """TVL-weighted attack surface scanner for under-audited smart contract protocols."""
 
-__version__ = "0.5.2"
+__version__ = "0.5.3"

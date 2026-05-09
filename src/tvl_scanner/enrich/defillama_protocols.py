@@ -33,7 +33,10 @@ from tvl_scanner.config import settings
 from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.github import enrich_repo
-from tvl_scanner.enrich.homepage_scrape import scrape_homepage_with_fallback
+from tvl_scanner.enrich.homepage_scrape import (
+    rank_github_urls_for_protocol,
+    scrape_homepage_with_fallback,
+)
 from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.enrich.solana_wrapper_check import (
     WrapperMatch,
@@ -382,6 +385,24 @@ async def _process_protocol(
                         weight=4,
                     )
                 )
+
+            # Fallback step in github_repo resolution chain: if DefiLlama
+            # and the curated registry both failed, try GitHub URLs found
+            # in the homepage HTML. Ranked by name overlap with the slug
+            # so we try the protocol's own repo before unrelated footer
+            # links. Cap at 3 candidate URLs to bound API calls.
+            if (repo_metadata is None or not repo_metadata.exists) and scrape.github_urls:
+                ranked = rank_github_urls_for_protocol(
+                    scrape.github_urls, slug=slug, display_name=name
+                )
+                for candidate_gh in ranked[:3]:
+                    repo_metadata = await enrich_repo(candidate_gh, client=client)
+                    if repo_metadata and repo_metadata.exists:
+                        log.info(
+                            "github resolved via homepage scrape: %s for %s",
+                            candidate_gh, slug,
+                        )
+                        break
 
         return EnrichedCandidate(
             chain=chain,
