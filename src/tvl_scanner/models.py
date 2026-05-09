@@ -105,7 +105,7 @@ class EnrichedCandidate(BaseModel):
     github_repo: HttpUrl | None = None
     loc_estimate: int | None = None
     docs_url: HttpUrl | None = None
-    bounty_program: Literal["immunefi", "hackerone", "hackenproof", "none"] = "none"
+    bounty_program: Literal["immunefi", "hackerone", "hackenproof", "cantina", "selfhosted", "none"] = "none"
     bounty_url: HttpUrl | None = None
     bounty_max_payout_usd: int | None = None
     defillama_slug: str | None = None
