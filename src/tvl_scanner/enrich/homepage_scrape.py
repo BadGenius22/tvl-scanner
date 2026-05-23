@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -165,12 +165,17 @@ def _extract_github_urls(html: str) -> list[str]:
     return out
 
 
-async def scrape_homepage(
+async def _fetch_and_extract(
     url: str | None, *, client: httpx.AsyncClient | None = None
-) -> HomepageScrapeResult:
-    """Fetch `url` and run regex extraction. Returns empty result on any failure."""
+) -> tuple[HomepageScrapeResult, str]:
+    """Internal: fetch + regex extraction, returns (result, html_sample).
+
+    The html_sample is exposed so callers (specifically the Phase 3 link-crawl
+    in scrape_homepage_with_fallback) can re-mine the page for audit-relevant
+    anchor tags without a second fetch. Returns ("", "") on any failure.
+    """
     if not url or not isinstance(url, str) or not url.startswith(("http://", "https://")):
-        return _EMPTY
+        return _EMPTY, ""
 
     owns_client = client is None
     if owns_client:
@@ -187,14 +192,28 @@ async def scrape_homepage(
     try:
         response = await client.get(url)
         if response.status_code >= 400:
-            return HomepageScrapeResult(
-                url=url, fetched=False, wrapper_matches=[], audit_firm_matches=[], github_urls=[]
+            return (
+                HomepageScrapeResult(
+                    url=url,
+                    fetched=False,
+                    wrapper_matches=[],
+                    audit_firm_matches=[],
+                    github_urls=[],
+                ),
+                "",
             )
         html = response.text
     except (httpx.HTTPError, ValueError) as exc:
         log.debug("homepage scrape failed for %s: %s", url, exc)
-        return HomepageScrapeResult(
-            url=url, fetched=False, wrapper_matches=[], audit_firm_matches=[], github_urls=[]
+        return (
+            HomepageScrapeResult(
+                url=url,
+                fetched=False,
+                wrapper_matches=[],
+                audit_firm_matches=[],
+                github_urls=[],
+            ),
+            "",
         )
     finally:
         if owns_client:
@@ -221,13 +240,24 @@ async def scrape_homepage(
 
     github_urls = _extract_github_urls(sample)
 
-    return HomepageScrapeResult(
-        url=url,
-        fetched=True,
-        wrapper_matches=sorted(wrapper_hits),
-        audit_firm_matches=sorted(audit_hits),
-        github_urls=github_urls,
+    return (
+        HomepageScrapeResult(
+            url=url,
+            fetched=True,
+            wrapper_matches=sorted(wrapper_hits),
+            audit_firm_matches=sorted(audit_hits),
+            github_urls=github_urls,
+        ),
+        sample,
     )
+
+
+async def scrape_homepage(
+    url: str | None, *, client: httpx.AsyncClient | None = None
+) -> HomepageScrapeResult:
+    """Fetch `url` and run regex extraction. Returns empty result on any failure."""
+    result, _html = await _fetch_and_extract(url, client=client)
+    return result
 
 
 def rank_github_urls_for_protocol(
@@ -302,13 +332,33 @@ _CANDIDATE_TLDS = ("com", "xyz", "io", "fi", "finance", "network", "app", "org")
 
 
 # Common security/audit URL paths to try on each candidate domain.
-# Ordered by likelihood of containing audit firm names.
+# Ordered by approximate likelihood of containing audit firm names — short and
+# common paths first, deeper nesting last. List intentionally over-covers so a
+# new protocol's docs nesting (e.g. SoDEX's /documentation/custody-and-security/
+# audits) doesn't slip through.
 _AUDIT_PATHS = (
-    "/security",
+    # Top-level shortcuts
+    "/audit",
     "/audits",
+    "/security",
+    "/audit-reports",
+    # Direct nesting
     "/security/audits",
+    "/security/audit-reports",
+    "/security/reports",
+    # /docs/* (mintlify / docusaurus convention)
+    "/docs/security",
+    "/docs/audits",
+    "/docs/security/audits",
+    # /documentation/* (gitbook convention)
     "/documentation/security",
     "/documentation/audits",
+    "/documentation/security/audits",
+    "/documentation/custody-and-security",
+    "/documentation/custody-and-security/audits",
+    # /about/* and /resources/*
+    "/about/security",
+    "/resources/audits",
 )
 
 
@@ -353,7 +403,9 @@ def derive_candidate_urls(
          company domain is also likely wrong.
       4. Slug × other TLDs × audit paths (least-likely fallback).
 
-    Returns a deduped, ordered list. Capped at ~15 entries to bound HTTP cost.
+    Returns a deduped, ordered list. Capped at ~25 entries to bound HTTP cost.
+    The actual per-scan request budget is enforced by scrape_homepage_with_fallback's
+    `max_attempts` parameter — this cap exists only to keep the ordered list bounded.
     """
     candidates: list[str] = []
     seen: set[str] = set()
@@ -411,12 +463,151 @@ def derive_candidate_urls(
             add(domain_base)
             for path in _AUDIT_PATHS:
                 add(domain_base + path)
-                if len(candidates) >= 15:
+                if len(candidates) >= 25:
                     break
-            if len(candidates) >= 15:
+            if len(candidates) >= 25:
                 break
 
-    return candidates[:15]
+    return candidates[:25]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BATCH L: Phase 3 link-crawl fallback
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# When derived audit-path guesses fail (Phase 2), the homepage itself almost
+# always links to the audit page from its nav or footer — but at a custom URL
+# we'd never guess (e.g. SoDEX uses /documentation/custody-and-security/audits).
+# We parse the Phase 1 HTML for <a href> tags whose href or anchor text mentions
+# audit/security/review keywords, then visit the highest-scoring same-domain
+# links and re-run the audit-firm regex on those pages.
+
+_ANCHOR_PATTERN = re.compile(
+    r'<a\s+[^>]*?href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+    re.I | re.DOTALL,
+)
+
+_AUDIT_KEYWORD_PATTERN = re.compile(r"\b(audit|audits|security|reviews?)\b", re.I)
+_AUDIT_STRONG_PATTERN = re.compile(r"\baudits?\b", re.I)
+
+# Subdomains whose registered-domain match should still count as "same site".
+# A protocol's audit page is often on docs.protocol.com or app.protocol.com,
+# never on a totally unrelated host — restricting to same registered domain
+# avoids following random external links (twitter, blog hosts, partners).
+_SAME_SITE_SUBDOMAIN_HINTS = frozenset(
+    {"docs", "app", "www", "security", "learn", "gitbook", "developers", "help"}
+)
+
+
+def _registered_domain(netloc: str) -> str:
+    """Last two dot-separated labels — a cheap proxy for the registered domain.
+
+    For `docs.sodex.com` returns `sodex.com`. For `sodex.com` returns `sodex.com`.
+    Imperfect for multi-label TLDs (`.co.uk`) but those are vanishingly rare
+    among DeFi protocol homepages, so the simpler heuristic wins.
+    """
+    parts = netloc.lower().split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return netloc.lower()
+
+
+def _clean_anchor_text(raw: str) -> str:
+    """Strip inner tags + collapse whitespace from anchor text."""
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", raw)).strip()
+
+
+def _extract_audit_relevant_links(html: str, base_url: str) -> list[str]:
+    """Find <a href> tags mentioning audit/security/review; return ranked URLs.
+
+    Same-registered-domain only — never follows out to twitter, partner sites,
+    or arbitrary external blogs. Deduped and capped to keep callers honest.
+    """
+    if not html or not base_url:
+        return []
+    try:
+        base_parsed = urlparse(base_url)
+        base_registered = _registered_domain(base_parsed.netloc)
+        if not base_registered or "." not in base_registered:
+            return []
+    except (ValueError, AttributeError):
+        return []
+
+    scored: list[tuple[int, str]] = []
+    seen: set[str] = set()
+
+    for match in _ANCHOR_PATTERN.finditer(html[:200_000]):
+        href = match.group(1).strip()
+        anchor = _clean_anchor_text(match.group(2))
+
+        if not href or href.startswith(("#", "javascript:", "mailto:", "tel:", "data:")):
+            continue
+
+        href_score = 0
+        anchor_score = 0
+        if _AUDIT_KEYWORD_PATTERN.search(href):
+            href_score = 3
+            if _AUDIT_STRONG_PATTERN.search(href):
+                href_score += 1
+        if _AUDIT_KEYWORD_PATTERN.search(anchor):
+            anchor_score = 2
+            if _AUDIT_STRONG_PATTERN.search(anchor):
+                anchor_score += 1
+        if href_score == 0 and anchor_score == 0:
+            continue
+
+        try:
+            absolute = urljoin(base_url, href)
+            absolute_parsed = urlparse(absolute)
+        except (ValueError, AttributeError):
+            continue
+
+        if absolute_parsed.scheme not in ("http", "https"):
+            continue
+        if not absolute_parsed.netloc:
+            continue
+        if _registered_domain(absolute_parsed.netloc) != base_registered:
+            continue
+
+        canonical = absolute.split("#")[0]
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        scored.append((href_score + anchor_score, canonical))
+
+        if len(scored) >= 15:
+            break
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [url for _, url in scored]
+
+
+async def _follow_audit_links(
+    base_url: str,
+    base_html: str,
+    *,
+    client: httpx.AsyncClient | None,
+    max_visits: int = 3,
+) -> HomepageScrapeResult:
+    """Visit the top audit-relevant links from base_html; return first useful hit."""
+    candidate_links = _extract_audit_relevant_links(base_html, base_url)
+    if not candidate_links:
+        return _EMPTY
+
+    best = _EMPTY
+    for link in candidate_links[:max_visits]:
+        result = await scrape_homepage(link, client=client)
+        if result.fetched and (result.audit_firm_matches or result.wrapper_matches):
+            log.info(
+                "homepage_scrape L link-crawl: %s → audit=%s wrapper=%s",
+                link,
+                result.audit_firm_matches,
+                result.wrapper_matches,
+            )
+            return result
+        if result.fetched and not best.fetched:
+            best = result
+    return best
 
 
 async def scrape_homepage_with_fallback(
@@ -424,35 +615,38 @@ async def scrape_homepage_with_fallback(
     display_name: str | None,
     *,
     client: httpx.AsyncClient | None = None,
-    max_attempts: int = 6,
+    max_attempts: int = 12,
 ) -> HomepageScrapeResult:
-    """Two-phase homepage scrape with derived URL fallback.
+    """Three-phase homepage scrape with derived URL and link-crawl fallback.
 
     Phase 1: try the base_url. If it returns successfully AND found at least
     one wrapper or audit firm match, return immediately — single URL was
     sufficient.
 
     Phase 2: try derived candidate URLs in order, stopping on the first
-    successful fetch that yields any wrapper or audit firm match. Caps at
-    `max_attempts` HTTP requests total (Phase 1 + Phase 2 combined).
+    successful fetch that yields any wrapper or audit firm match.
 
-    Returns the BEST result found across all attempts (the URL that
-    produced the most/strongest matches), or an empty result if nothing
-    succeeded.
+    Phase 3 (Batch L): if Phase 1 fetched HTML but found nothing, mine that
+    HTML for <a href> links whose href or anchor text mentions audit/security/
+    review keywords and visit those (top 3, same-registered-domain only).
+    Catches protocols whose audit page lives at a custom path we'd never guess
+    (e.g. SoDEX → /documentation/custody-and-security/audits).
+
+    Total HTTP requests are capped by `max_attempts` across all three phases.
+    Returns the BEST result found, or an empty result if nothing succeeded.
     """
     # Phase 1
-    primary = await scrape_homepage(base_url, client=client)
+    primary, primary_html = await _fetch_and_extract(base_url, client=client)
     if primary.fetched and (primary.wrapper_matches or primary.audit_firm_matches):
         return primary
 
     # Phase 2: try derived URLs
     derived = derive_candidate_urls(display_name, base_url)
-    # Skip the base_url since we just tried it
     if base_url in derived:
         derived = [u for u in derived if u != base_url]
 
-    best_result = primary  # baseline; updated if a derived URL beats it
-    attempts_made = 1  # Phase 1 counts as 1
+    best_result = primary
+    attempts_made = 1
     for candidate in derived:
         if attempts_made >= max_attempts:
             break
@@ -468,5 +662,23 @@ async def scrape_homepage_with_fallback(
                 result.audit_firm_matches,
             )
             return result
+        if result.fetched and not best_result.fetched:
+            best_result = result
+
+    # Phase 3 (Batch L): mine Phase 1's HTML for audit-related links
+    if primary.fetched and primary_html and attempts_made < max_attempts:
+        remaining = max_attempts - attempts_made
+        crawl_result = await _follow_audit_links(
+            primary.url or base_url or "",
+            primary_html,
+            client=client,
+            max_visits=min(3, remaining),
+        )
+        if crawl_result.fetched and (
+            crawl_result.audit_firm_matches or crawl_result.wrapper_matches
+        ):
+            return crawl_result
+        if crawl_result.fetched and not best_result.fetched:
+            best_result = crawl_result
 
     return best_result

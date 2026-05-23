@@ -13,6 +13,8 @@ from tvl_scanner.enrich.homepage_scrape import (
     AUDIT_FIRM_PHRASES,
     WRAPPER_PHRASES,
     HomepageScrapeResult,
+    _extract_audit_relevant_links,
+    _registered_domain,
     _slugify_display_name,
     derive_candidate_urls,
     scrape_homepage,
@@ -150,9 +152,41 @@ def test_derive_candidate_urls_generates_slug_based_domains() -> None:
 
 
 def test_derive_candidate_urls_caps_total() -> None:
-    """No more than 15 URLs to bound HTTP cost."""
+    """No more than 25 URLs to bound HTTP cost (raised from 15 in Batch L
+    when _AUDIT_PATHS expanded to 18 entries)."""
     urls = derive_candidate_urls("SoDEX Bridge", "https://ssi.sosovalue.com/share/abc")
-    assert len(urls) <= 15
+    assert len(urls) <= 25
+
+
+def test_derive_candidate_urls_includes_deep_nesting() -> None:
+    """Batch L: sodex.com/documentation/custody-and-security/audits must be
+    a derived candidate so the brand's actual audit path is reachable without
+    needing the link-crawl fallback."""
+    urls = derive_candidate_urls("SoDEX Bridge", None)
+    assert any(
+        u.endswith("/documentation/custody-and-security/audits") for u in urls
+    ), f"deep audit path missing from derived URLs: {urls}"
+
+
+def test_derive_candidate_urls_includes_common_nesting() -> None:
+    """Spot-check that the expanded path set covers the most common patterns."""
+    urls = derive_candidate_urls("SoDEX Bridge", None)
+    suffixes_required = {
+        "/audit",
+        "/audits",
+        "/security",
+        "/security/audits",
+        "/docs/audits",
+        "/documentation/security/audits",
+    }
+    found = {
+        suffix
+        for suffix in suffixes_required
+        if any(u.endswith(suffix) for u in urls)
+    }
+    assert found == suffixes_required, (
+        f"missing path suffixes: {suffixes_required - found}"
+    )
 
 
 def test_derive_candidate_urls_handles_no_inputs() -> None:
@@ -223,3 +257,160 @@ async def test_fallback_returns_empty_when_nothing_succeeds(
     assert result.fetched is False
     assert result.audit_firm_matches == []
     assert result.wrapper_matches == []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BATCH L: Phase 3 link-crawl fallback tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_registered_domain_extracts_last_two_labels() -> None:
+    assert _registered_domain("sodex.com") == "sodex.com"
+    assert _registered_domain("docs.sodex.com") == "sodex.com"
+    assert _registered_domain("app.docs.sodex.com") == "sodex.com"
+    assert _registered_domain("SODEX.COM") == "sodex.com"  # case-insensitive
+    assert _registered_domain("localhost") == "localhost"  # single label
+
+
+def test_extract_audit_links_finds_href_keyword() -> None:
+    """Anchor whose href contains 'audit' must be picked up."""
+    html = '''
+    <a href="/documentation/custody-and-security/audits">Reports</a>
+    <a href="/about">About</a>
+    '''
+    links = _extract_audit_relevant_links(html, "https://sodex.com/")
+    assert links == ["https://sodex.com/documentation/custody-and-security/audits"]
+
+
+def test_extract_audit_links_finds_anchor_text_keyword() -> None:
+    """Anchor whose VISIBLE TEXT contains 'security' must be picked up even when
+    the href is opaque (common with hash-routed SPAs and CMS-generated slugs)."""
+    html = '''
+    <a href="/page-1234">Security &amp; Audits</a>
+    <a href="/page-5678">Team</a>
+    '''
+    links = _extract_audit_relevant_links(html, "https://sodex.com/")
+    assert links == ["https://sodex.com/page-1234"]
+
+
+def test_extract_audit_links_ranks_strong_audit_matches_higher() -> None:
+    """An href containing 'audits' should rank above one only matching 'security'."""
+    html = '''
+    <a href="/security/overview">Security overview</a>
+    <a href="/audits">Audit reports</a>
+    <a href="/about/review">Reviews</a>
+    '''
+    links = _extract_audit_relevant_links(html, "https://example.com/")
+    # /audits should be first — both href and anchor have the strong "audit" token
+    assert links[0] == "https://example.com/audits"
+
+
+def test_extract_audit_links_filters_external_domains() -> None:
+    """Out-of-domain links (twitter, partner blogs) must never be followed."""
+    html = '''
+    <a href="https://twitter.com/sodex/status/audit-results">Audit announcement</a>
+    <a href="https://halborn.com/audits/sodex">Halborn audit page</a>
+    <a href="/security">Our security</a>
+    '''
+    links = _extract_audit_relevant_links(html, "https://sodex.com/")
+    # Only the same-domain link is kept
+    assert links == ["https://sodex.com/security"]
+
+
+def test_extract_audit_links_allows_subdomain_of_same_registered_domain() -> None:
+    """docs.sodex.com is fair game when called from sodex.com."""
+    html = '<a href="https://docs.sodex.com/security/audits">Security audits</a>'
+    links = _extract_audit_relevant_links(html, "https://sodex.com/")
+    assert links == ["https://docs.sodex.com/security/audits"]
+
+
+def test_extract_audit_links_dedupes_and_normalizes() -> None:
+    html = '''
+    <a href="/audits">Audits</a>
+    <a href="/audits#latest">Latest audits</a>
+    <a href="/audits">Audits again</a>
+    '''
+    links = _extract_audit_relevant_links(html, "https://example.com/")
+    assert links == ["https://example.com/audits"]
+
+
+def test_extract_audit_links_ignores_javascript_and_mailto() -> None:
+    html = '''
+    <a href="javascript:openAudit()">Audit</a>
+    <a href="mailto:security@sodex.com">Email security</a>
+    <a href="#audit-section">Jump to audits</a>
+    <a href="/audits">Real audit page</a>
+    '''
+    links = _extract_audit_relevant_links(html, "https://sodex.com/")
+    assert links == ["https://sodex.com/audits"]
+
+
+def test_extract_audit_links_empty_inputs() -> None:
+    assert _extract_audit_relevant_links("", "https://sodex.com/") == []
+    assert _extract_audit_relevant_links("<html></html>", "") == []
+    assert _extract_audit_relevant_links("<a href='/audits'>x</a>", "not-a-url") == []
+
+
+async def test_phase3_link_crawl_finds_custom_audit_path(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """The full SoDEX case end-to-end:
+    - DefiLlama base_url returns the brand homepage (no audit firm text directly)
+    - Derived /security, /audits etc. all 404
+    - But the homepage HTML links to /documentation/custody-and-security/audits
+    - Phase 3 follows that link and finds 'audited by Halborn'
+    """
+    # Phase 1: brand homepage with nav link to custom audit path
+    httpx_mock.add_response(
+        url="https://sodex.com/",
+        text='''<html><body>
+            <nav>
+              <a href="/team">Team</a>
+              <a href="/documentation/custody-and-security/audits">Custody &amp; Security</a>
+            </nav>
+            <h1>SoDEX — bridge</h1>
+        </body></html>''',
+    )
+    # The custom audit page actually carries the audit text
+    httpx_mock.add_response(
+        url="https://sodex.com/documentation/custody-and-security/audits",
+        text="<html>SoDEX has undergone a security audit by Halborn in 2026.</html>",
+        is_reusable=True,
+    )
+    # Catch-all 404 for derived URL attempts (Phase 2) and anything else
+    httpx_mock.add_response(
+        url=re.compile(
+            r"^https://(?!sodex\.com/documentation/custody-and-security/audits$"
+            r"|sodex\.com/$).*"
+        ),
+        status_code=404,
+        text="",
+        is_reusable=True,
+    )
+
+    result = await scrape_homepage_with_fallback(
+        "https://sodex.com/",
+        "SoDEX Bridge",
+        max_attempts=20,
+    )
+    assert result.fetched is True
+    assert "halborn" in result.audit_firm_matches
+    assert result.url.endswith("/documentation/custody-and-security/audits")
+
+
+async def test_phase3_skipped_when_phase1_empty_html(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """If Phase 1 returns 404/empty, there's no HTML to link-crawl — Phase 3
+    must short-circuit cleanly and not raise."""
+    httpx_mock.add_response(
+        url=re.compile(r"^https://.*$"),
+        status_code=404,
+        text="",
+        is_reusable=True,
+    )
+    result = await scrape_homepage_with_fallback(
+        "https://nowhere.example.com/", "Nowhere Protocol", max_attempts=20
+    )
+    assert result.fetched is False
+    assert result.audit_firm_matches == []
