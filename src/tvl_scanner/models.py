@@ -41,6 +41,7 @@ class DiscoverySource(str, Enum):
     BIRDEYE = "birdeye"
     DEFILLAMA_CATALOG = "defillama_catalog"
     ALCHEMY_DEPLOYMENTS = "alchemy_deployments"
+    RPC_ACTIVE_HOLDERS = "rpc_active_holders"
     FACTORY_EVENTS = "factory_events"
     DUNE = "dune"
     FLIPSIDE = "flipside"

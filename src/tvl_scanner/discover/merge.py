@@ -25,6 +25,7 @@ from tvl_scanner.config import settings
 from tvl_scanner.discover.alchemy import fetch_fresh_deployments as fetch_alchemy
 from tvl_scanner.discover.birdeye import fetch_top_pairs as fetch_birdeye
 from tvl_scanner.discover.geckoterminal import fetch_new_pools as fetch_geckoterminal
+from tvl_scanner.discover.rpc import fetch_active_holders as fetch_rpc_holders
 from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.http import make_client
 from tvl_scanner.models import Chain, DiscoveredContract
@@ -89,6 +90,16 @@ async def discover_all(
             tasks.append(
                 asyncio.create_task(
                     fetch_alchemy(
+                        chain,
+                        price_cache=price_cache,
+                        client=client,
+                        scan_date=scan_date,
+                    )
+                )
+            )
+            tasks.append(
+                asyncio.create_task(
+                    fetch_rpc_holders(
                         chain,
                         price_cache=price_cache,
                         client=client,
