@@ -632,8 +632,12 @@ async def scrape_homepage_with_fallback(
     Catches protocols whose audit page lives at a custom path we'd never guess
     (e.g. SoDEX → /documentation/custody-and-security/audits).
 
-    Total HTTP requests are capped by `max_attempts` across all three phases.
-    Returns the BEST result found, or an empty result if nothing succeeded.
+    Phases 1 and 2 share the `max_attempts` budget. Phase 3 has its own
+    implicit budget of 3 visits because it's targeted (only follows links the
+    homepage itself surfaces, same-registered-domain only) and a tight
+    caller-side max_attempts shouldn't strangle the cheapest, highest-signal
+    fallback. Returns the BEST result found, or an empty result if nothing
+    succeeded.
     """
     # Phase 1
     primary, primary_html = await _fetch_and_extract(base_url, client=client)
@@ -665,14 +669,16 @@ async def scrape_homepage_with_fallback(
         if result.fetched and not best_result.fetched:
             best_result = result
 
-    # Phase 3 (Batch L): mine Phase 1's HTML for audit-related links
-    if primary.fetched and primary_html and attempts_made < max_attempts:
-        remaining = max_attempts - attempts_made
+    # Phase 3 (Batch L): mine Phase 1's HTML for audit-related links.
+    # Independent of the max_attempts budget — Phase 3 only fires when the
+    # homepage actually produced HTML and the cheaper phases came up empty,
+    # and it's bounded internally to 3 visits (one HTTP each).
+    if primary.fetched and primary_html:
         crawl_result = await _follow_audit_links(
             primary.url or base_url or "",
             primary_html,
             client=client,
-            max_visits=min(3, remaining),
+            max_visits=3,
         )
         if crawl_result.fetched and (
             crawl_result.audit_firm_matches or crawl_result.wrapper_matches

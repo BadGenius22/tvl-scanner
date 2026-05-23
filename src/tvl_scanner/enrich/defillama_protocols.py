@@ -336,14 +336,21 @@ async def _process_protocol(
 
         # BATCH K + K2: homepage scrape with multi-URL fallback. Phase 1 tries
         # DefiLlama's `url` field; Phase 2 derives candidate URLs from the
-        # display_name when Phase 1 returns empty.
+        # display_name when Phase 1 returns empty; Phase 3 (Batch L) mines
+        # Phase 1 HTML for audit-related <a href> links.
         #
-        # K2 cost gate: only fire the Phase 2 fallback (max 5 extra HTTP
-        # requests per candidate) when the candidate has NO other audit signal
-        # available. If DefiLlama already reports audits, or we already
-        # detected a wrapper / bounty match, the candidate is well-classified
-        # and additional homepage scraping is wasted work. This cuts K2 cost
-        # from ~7 minutes to ~2 minutes on a typical 145-candidate scan.
+        # K2 cost gate: only fire the Phase 2 fallback when the candidate has
+        # NO other audit signal available. If DefiLlama already reports audits,
+        # or we already detected a wrapper / bounty match, the candidate is
+        # well-classified and additional homepage scraping is wasted work.
+        #
+        # BATCH L tuning: raised max_attempts 4 → 20 because Batch L expanded
+        # _AUDIT_PATHS from 5 to 18 entries — at 4 attempts the deeper paths
+        # (e.g. /documentation/custody-and-security/audits used by SoDEX) were
+        # unreachable. Phase 3 link-crawl now also has its own implicit budget
+        # of 3 visits independent of max_attempts, so the catalog path catches
+        # protocols whose audit page is at an unguessable custom URL but
+        # linked from the brand homepage's nav.
         needs_k2_fallback = (
             (dl_audit_count is None or dl_audit_count == 0)
             and bounty_program == "none"
@@ -356,7 +363,7 @@ async def _process_protocol(
                     homepage_url if isinstance(homepage_url, str) else None,
                     name,
                     client=client,
-                    max_attempts=4,
+                    max_attempts=20,
                 )
             else:
                 # Phase 1 only — single URL, no derived URL fallback
