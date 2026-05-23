@@ -28,7 +28,10 @@ from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.evm_bytecode_check import check_bytecode_match
-from tvl_scanner.enrich.evm_factory_check import check_factory_attribution
+from tvl_scanner.enrich.evm_factory_check import (
+    check_factory_attribution,
+    fetch_contract_name,
+)
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
 from tvl_scanner.enrich.homepage_scrape import (
     rank_github_urls_for_protocol,
@@ -313,10 +316,25 @@ async def enrich_one(
 
     languages = _derive_languages(contract.chain, repo_metadata)
 
+    # Batch N.4: if DefiLlama didn't supply a display_name (i.e. an RPC-
+    # discovered contract that's not in the catalog), fetch the contract's
+    # on-chain `name()` and use it. Without this, Ostium LP ($29M Arbitrum)
+    # shows up in the report as "arbitrum:0x20d419a8…" instead of "ostiumLP" —
+    # the protocol is identifiable on-chain but invisible to a reader.
+    on_chain_name: str | None = None
+    if (
+        not dl_match
+        and contract.chain != Chain.SOLANA
+        and contract.address.startswith("0x")
+    ):
+        on_chain_name = await fetch_contract_name(
+            contract.chain, contract.address, client=client
+        )
+
     # Bounty registry lookup (seeds file) — upgrades bounty_program from "none"
     # if the candidate matches a known public bounty.
     bounty_entry = bounty.match(
-        display_name=_display_name(contract, dl_match),
+        display_name=on_chain_name or _display_name(contract, dl_match),
         defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
         target_name=_target_slug(contract, dl_match),
     )
@@ -332,7 +350,7 @@ async def enrich_one(
         unique_users_30d=contract.unique_users_30d,
         source=contract.source,
         target_name=_target_slug(contract, dl_match),
-        display_name=_display_name(contract, dl_match),
+        display_name=on_chain_name or _display_name(contract, dl_match),
         protocol_type=_protocol_type(contract, dl_match),
         languages=languages,
         github_repo=repo_metadata.url if repo_metadata and repo_metadata.exists else None,

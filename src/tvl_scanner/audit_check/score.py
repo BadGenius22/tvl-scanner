@@ -66,6 +66,14 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "ethena",        # Ethena USDe (Quantstamp, Spearbit, Cantina)
     "zircuit",       # Zircuit (zk audits)
     "kelp",          # Kelp DAO (Sigma Prime)
+    # Added Batch N.5 — surfaced as false positives in real scans:
+    "raydium",       # Raydium (Ottersec, multiple)
+    "euler",         # Euler Vault Kit / Euler v2 (Spearbit, Cantina, Hexens, others)
+    "jupiter",       # Jupiter Aggregator (Solana, multiple audits)
+    "marginfi",      # marginfi (Halborn, Ottersec)
+    "drift",         # Drift Protocol (Solana, multiple audits)
+    "kamino",        # Kamino Finance (Ottersec, Trail of Bits)
+    "marinade",      # Marinade Finance (Neodyme, Kudelski)
 )
 
 

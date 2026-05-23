@@ -41,7 +41,7 @@ import asyncio
 import logging
 import os
 import random
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -361,6 +361,64 @@ async def _get_token_balance(
     return _hex_to_int(result) if isinstance(result, str) else 0
 
 
+async def _find_creation_block_via_binary_search(
+    url: str, addr: str, latest: int, client: httpx.AsyncClient
+) -> int | None:
+    """Binary-search `eth_getCode` across blocks to find when `addr` was deployed.
+
+    Returns the first block at which the contract has code, or None on failure.
+    Cost: O(log2(latest)) eth_getCode calls — typically 20-25 on Ethereum,
+    18-22 on Base/Optimism. Used as fallback when Etherscan's
+    `getcontractcreation` is unavailable (free tier blocks Base/Optimism/BSC).
+
+    Robust on RPC failures: a None response (rate limit, transport error) at
+    any mid-block is retried once, and aborts the search entirely if it fails
+    twice. Without this, failed mid-search calls were silently treated as "no
+    code" — biasing the binary search toward wrongly-recent block numbers
+    and producing first_seen dates that didn't match reality.
+    """
+    code_now = await _rpc_call(url, "eth_getCode", [addr, "latest"], client)
+    if not isinstance(code_now, str) or code_now == "0x" or code_now == "0x0":
+        return None  # not a contract (anymore)
+
+    lo, hi = 1, latest
+    while lo < hi:
+        mid = (lo + hi) // 2
+        code = await _rpc_call(url, "eth_getCode", [addr, hex(mid)], client)
+        if not isinstance(code, str):
+            # RPC failure — retry once
+            await asyncio.sleep(1)
+            code = await _rpc_call(url, "eth_getCode", [addr, hex(mid)], client)
+            if not isinstance(code, str):
+                # Persistent failure; abort cleanly rather than producing a
+                # wrong answer that biases toward recent blocks.
+                return None
+        if code != "0x" and code != "0x0":
+            hi = mid  # code exists here; search lower
+        else:
+            lo = mid + 1  # code missing here; search higher
+    return lo if lo > 0 else None
+
+
+async def _get_block_timestamp(
+    url: str, block_num: int, client: httpx.AsyncClient
+) -> date | None:
+    """Resolve a block number's UTC date via `eth_getBlockByNumber`."""
+    result = await _rpc_call(
+        url, "eth_getBlockByNumber", [hex(block_num), False], client
+    )
+    if not isinstance(result, dict):
+        return None
+    ts_raw = result.get("timestamp")
+    try:
+        ts = int(ts_raw, 16) if isinstance(ts_raw, str) else int(ts_raw)
+    except (TypeError, ValueError):
+        return None
+    if ts <= 0:
+        return None
+    return datetime.fromtimestamp(ts, tz=timezone.utc).date()
+
+
 async def fetch_active_holders(
     chain: Chain,
     *,
@@ -588,16 +646,52 @@ async def fetch_active_holders(
             survivors.append((addr, total_tvl_usd))
 
         # ── Step 5d: bulk-fetch real deployment dates ───────────────────────
-        # Etherscan V2 supports up to 5 addresses per getcontractcreation call.
-        # Batching N → ceil(N/5) makes the difference between most calls
-        # 429-ing on the free tier (5 req/s) vs. most calls succeeding. We
-        # default first_seen to scan_date only as a fallback for addresses
-        # Etherscan can't resolve — previously this fallback fired on 109 of
-        # 111 candidates and put 5-year-old pools at the top tagged "0d old".
+        # Etherscan V2 supports up to 5 addresses per getcontractcreation call,
+        # but ONLY for Ethereum/Arbitrum/Polygon on the free tier. For
+        # Base/Optimism/BSC we fall through to an on-chain binary search of
+        # eth_getCode — log2(latest_block) calls per address, parallelized.
         survivor_addrs = [addr for addr, _ in survivors]
         creation_map = await fetch_creation_dates_batch(
             chain, survivor_addrs, client=client
         )
+
+        missing_addrs = [
+            a for a in survivor_addrs if a.lower() not in creation_map
+        ]
+        if missing_addrs:
+            # Bounded concurrency — binary search bursts ~20 calls per address,
+            # which would otherwise overflow free-tier compute units.
+            search_sem = asyncio.Semaphore(2)
+
+            async def _bounded_search(addr: str) -> tuple[str, date | None]:
+                async with search_sem:
+                    block = await _find_creation_block_via_binary_search(
+                        url, addr, latest, client
+                    )
+                    if block is None:
+                        return addr, None
+                    d = await _get_block_timestamp(url, block, client)
+                    return addr, d
+
+            search_results = await asyncio.gather(
+                *[_bounded_search(a) for a in missing_addrs],
+                return_exceptions=True,
+            )
+            for sr in search_results:
+                if isinstance(sr, BaseException):
+                    continue
+                addr_s, d = sr
+                if d:
+                    creation_map[addr_s.lower()] = d
+
+            log.info(
+                "rpc holders %s: binary-searched creation date for %d "
+                "Etherscan-unresolved addresses",
+                chain.value,
+                sum(1 for sr in search_results
+                    if not isinstance(sr, BaseException) and sr[1] is not None),
+            )
+
         log.info(
             "rpc holders %s: resolved creation dates for %d of %d survivors",
             chain.value,
@@ -605,9 +699,20 @@ async def fetch_active_holders(
             len(survivor_addrs),
         )
 
+        # When neither Etherscan nor binary search could resolve the creation
+        # date (typically Base/BSC where the contract has 25k+ recipients and
+        # the search budget was exhausted), default to (scan_date - 180 days)
+        # rather than scan_date. Treating "unknown age" as "0d old" gave the
+        # candidate a maxed-out freshness_score = 10 and put established
+        # protocols at the top of the report. 180 days is a hedge: passes the
+        # age filter (≤ 365d), but freshness_score drops to ~5 instead of 10,
+        # so candidates with unverified ages don't crowd out genuinely fresh
+        # ones.
+        unknown_age_default = scan_date - timedelta(days=180)
+
         kept: list[DiscoveredContract] = []
         for addr, total_tvl_usd in survivors:
-            first_seen_date = creation_map.get(addr.lower()) or scan_date
+            first_seen_date = creation_map.get(addr.lower()) or unknown_age_default
             kept.append(
                 DiscoveredContract(
                     chain=chain,

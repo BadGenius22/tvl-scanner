@@ -191,6 +191,7 @@ class FactoryMatch:
     contract_address: str
     factory_address: str
     entry: FactoryEntry
+    on_chain_name: str | None = None  # contract's name() when probed; populated even on Path 4 / no-match
 
 
 # Function selectors
@@ -233,6 +234,14 @@ NAME_PREFIX_TO_PROTOCOL: dict[str, tuple[str, str]] = {
     "stETH":           ("Lido Staked ETH",   "lido"),
     "wstETH":          ("Lido Wrapped stETH","lido"),
     "rETH":            ("Rocket Pool ETH",   "rocket-pool"),
+    # Batch N.5:
+    "EVK Vault ":      ("Euler Vault Kit",   "euler"),
+    "EVK ":            ("Euler Vault Kit",   "euler"),
+    "Euler ":          ("Euler",             "euler"),
+    "Gauntlet ":       ("Gauntlet Vault",    "morpho"),  # Gauntlet runs Morpho vaults
+    "MEV Capital ":    ("MEV Capital Vault", "morpho"),
+    "Re7 ":            ("Re7 Vault",         "morpho"),
+    "BlockAnalitica ": ("BlockAnalitica Vault","morpho"),
 }
 
 
@@ -329,6 +338,42 @@ def _decode_abi_string(word: str | None) -> str | None:
     except (ValueError, UnicodeDecodeError):
         return None
     return None
+
+
+async def fetch_contract_name(
+    chain: Chain, address: str, *, client: httpx.AsyncClient | None = None
+) -> str | None:
+    """Standalone `name()` lookup for any EVM contract.
+
+    Used by the enricher to surface a real protocol identifier in
+    `display_name` when DefiLlama didn't match the candidate. Without this,
+    Ostium LP (`ostiumLP` on-chain) would display as `arbitrum:0x20d419a8…`,
+    making the report harder to scan. Returns the contract's `name()`
+    string, or None on any failure path.
+    """
+    if chain == Chain.SOLANA:
+        return None
+    if not address.startswith("0x") or len(address) != 42:
+        return None
+    url = _rpc_url(chain)
+    if not url:
+        return None
+
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(timeout=15.0)
+    assert client is not None
+    try:
+        name_result = await _rpc_call(
+            url, "eth_call",
+            [{"to": address, "data": _NAME_SELECTOR}, "latest"], client,
+        )
+        return _decode_abi_string(
+            name_result if isinstance(name_result, str) else None
+        )
+    finally:
+        if owns_client:
+            await client.aclose()
 
 
 async def check_factory_attribution(
