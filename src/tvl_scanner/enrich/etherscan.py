@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
 
 import httpx
 
@@ -148,3 +149,95 @@ async def check_verification(
         return _EMPTY_NOT_VERIFIED
 
     return _parse_etherscan_result(result[0])
+
+
+_CREATION_BATCH_SIZE = 5  # Etherscan V2 accepts up to 5 addresses per call
+
+
+async def fetch_creation_dates_batch(
+    chain: Chain, addresses: list[str], *, client: httpx.AsyncClient | None = None
+) -> dict[str, date]:
+    """Bulk-resolve deployment dates for `addresses` on `chain` via Etherscan V2.
+
+    Etherscan's `contract/getcontractcreation` accepts a comma-separated list
+    of up to 5 addresses per call (per V2 docs). Batching this way drops the
+    request count from N to ceil(N/5), which is the difference between most
+    calls 429-ing on the free tier (5 req/s) versus most calls succeeding.
+
+    Returns a dict mapping (lowercase) address → date for every successfully
+    resolved address. Addresses missing from the dict can be defaulted by
+    the caller (typically to scan_date). Errors are logged at INFO and
+    silently dropped — partial coverage is better than no coverage.
+    """
+    if chain not in CHAIN_TO_ETHERSCAN_ID:
+        return {}
+    api_key = get_secret("etherscan", required=False)
+    if not api_key:
+        return {}
+
+    valid_addrs = [a.lower() for a in addresses if _is_evm_address(a)]
+    if not valid_addrs:
+        return {}
+
+    url = "https://api.etherscan.io/v2/api"
+    chain_id = CHAIN_TO_ETHERSCAN_ID[chain]
+    out: dict[str, date] = {}
+
+    for batch_start in range(0, len(valid_addrs), _CREATION_BATCH_SIZE):
+        batch = valid_addrs[batch_start : batch_start + _CREATION_BATCH_SIZE]
+        params = {
+            "chainid": chain_id,
+            "module": "contract",
+            "action": "getcontractcreation",
+            "contractaddresses": ",".join(batch),
+            "apikey": api_key,
+        }
+        try:
+            payload = await get_json(url, params=params, client=client)
+        except HttpError as exc:
+            log.info(
+                "etherscan creation batch failed (%d addrs on %s): %s",
+                len(batch),
+                chain.value,
+                exc,
+            )
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+        status = str(payload.get("status") or "")
+        result = payload.get("result")
+        if status != "1" or not isinstance(result, list):
+            continue
+
+        for entry in result:
+            if not isinstance(entry, dict):
+                continue
+            entry_addr_raw = entry.get("contractAddress")
+            ts_raw = entry.get("timestamp")
+            if not isinstance(entry_addr_raw, str):
+                continue
+            try:
+                ts = int(ts_raw)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                continue
+            if ts <= 0:
+                continue
+            out[entry_addr_raw.lower()] = datetime.fromtimestamp(
+                ts, tz=timezone.utc
+            ).date()
+
+    return out
+
+
+async def fetch_creation_date(
+    chain: Chain, address: str, *, client: httpx.AsyncClient | None = None
+) -> date | None:
+    """Single-address creation date lookup — convenience wrapper over the batch.
+
+    Kept for callers that only need one address (and for tests). Batches of
+    size 1 still use the same Etherscan endpoint with the same cost as a
+    direct query.
+    """
+    result = await fetch_creation_dates_batch(chain, [address], client=client)
+    return result.get(address.lower())

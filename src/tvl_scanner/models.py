@@ -59,6 +59,7 @@ class AuditSourceKind(str, Enum):
     BOUNTY_TRUST = "bounty_trust"
     WRAPPER_PROGRAM = "wrapper_program"  # Batch J: protocol wraps a known audited program (SPL stake pool, Uniswap V2 pair, etc.)
     HOMEPAGE_SCRAPE = "homepage_scrape"  # Batch K: regex hit on the protocol's own homepage citing an audit firm
+    FACTORY_ATTRIBUTION = "factory_attribution"  # Batch N: contract's factory() returns a known DEX factory (V3 pool etc.)
 
 
 class AuditSource(BaseModel):

@@ -26,6 +26,49 @@ from tvl_scanner.models import (
 log = logging.getLogger(__name__)
 
 
+# Protocols whose DefiLlama slug (or display name) maps to a well-known
+# audited upstream. When the candidate's slug starts with any of these
+# prefixes, the audit attribution is definitive regardless of what
+# DefiLlama's `audits` field says. Why this exists: DefiLlama lists each
+# Uniswap V4 pool as a separate sub-entry with audits=0, even though the
+# underlying V4 core is heavily audited. Without this whitelist those
+# pools surface as multi-billion-TVL "under-audited" false positives.
+#
+# Match is case-insensitive prefix-match on the slug. Conservative — only
+# protocols whose audit history is universally known.
+KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
+    "uniswap",       # uniswap-v2, uniswap-v3, uniswap-v4, uniswap-v4-arbitrum, etc.
+    "sushiswap",
+    "pancakeswap",
+    "curve",         # curve-dex, curve-finance
+    "balancer",      # balancer-v2, balancer-v3
+    "aave",          # aave-v2, aave-v3, aave-v3-lite
+    "compound",      # compound-v2, compound-v3
+    "maker",         # makerdao, maker-rwa
+    "morpho",        # morpho-blue, morpho-aave-v3
+    "aerodrome",
+    "velodrome",
+    "quickswap",
+    "lido",
+    "rocket-pool",
+    "stader",
+    "ether-fi",
+    "renzo",
+    "pendle",
+    # Added Batch N.3 — confirmed public audit history:
+    "venus",         # Venus Protocol (Peckshield, OpenZeppelin)
+    "obol",          # Obol Network (Sigma Prime, ChainSecurity)
+    "usual",         # Usual.money (Sherlock)
+    "inverse",       # Inverse Finance (DeFiSafety + others)
+    "spark",         # Spark Protocol (Maker subsidiary)
+    "yearn",         # Yearn V2/V3 (multiple audits)
+    "fluid",         # Fluid by Instadapp (multiple audits)
+    "ethena",        # Ethena USDe (Quantstamp, Spearbit, Cantina)
+    "zircuit",       # Zircuit (zk audits)
+    "kelp",          # Kelp DAO (Sigma Prime)
+)
+
+
 # Cap per source kind to prevent one noisy source from dominating
 CAPS: dict[AuditSourceKind, int] = {
     AuditSourceKind.DEFILLAMA: 3,
@@ -181,6 +224,41 @@ def compute_score(
     all_sources.extend(candidate.precomputed_audit_sources)
     all_sources.extend(contest_sources)
 
+    # BATCH N.2: slug/name-prefix attribution. Done HERE (before total_score)
+    # so the synthetic source contributes to audit_density_score, which feeds
+    # the priority formula's audit_gap calculation. Without this, V4 pools
+    # would stay flagged with audit_density_score=0 → audit_gap=10 → high
+    # priority, even though we'd correctly set under_audited=False.
+    #
+    # Matches against EITHER defillama_slug or display_name (lowercased,
+    # whitespace-stripped to first token). GeckoTerminal-sourced candidates
+    # often have display_name="Uniswap V4 (Arbitrum)" but slug=None, so a
+    # slug-only check misses them.
+    name_for_match = None
+    if candidate.defillama_slug:
+        name_for_match = candidate.defillama_slug.lower()
+    elif candidate.display_name:
+        # Take the first token of the display name, lowercased. Handles
+        # "Uniswap V4 (Arbitrum)" → "uniswap", "SushiSwap (BSC)" → "sushiswap".
+        first_token = candidate.display_name.split()[0] if candidate.display_name.strip() else ""
+        name_for_match = first_token.lower()
+
+    if name_for_match and any(
+        name_for_match.startswith(prefix)
+        for prefix in KNOWN_AUDITED_SLUG_PREFIXES
+    ):
+        all_sources.append(
+            AuditSource(
+                source=AuditSourceKind.FACTORY_ATTRIBUTION,
+                url=None,
+                title=(
+                    f"Name '{name_for_match}' matches known audited protocol "
+                    f"family — audit attribution by name"
+                ),
+                weight=4,
+            )
+        )
+
     total_score = sum(src.weight for src in all_sources)
     under_audited = total_score <= UNDER_AUDITED_THRESHOLD
 
@@ -193,14 +271,17 @@ def compute_score(
     ):
         under_audited = False
 
-    # BATCH J/K override: a single wrapper-program or homepage-scrape source
-    # is also definitive evidence of prior auditing — these are signals the
-    # other override paths miss (DefiLlama doesn't track wrappers, doesn't
-    # scrape homepages).
-    for src in candidate.precomputed_audit_sources:
+    # BATCH J/K/N override: a single wrapper-program, homepage-scrape, or
+    # factory-attribution source is definitive evidence of prior auditing —
+    # these are signals the other override paths miss. WRAPPER_PROGRAM
+    # (bytecode hash match) and FACTORY_ATTRIBUTION (factory() call or
+    # slug-prefix match) both attribute audits via the upstream protocol;
+    # HOMEPAGE_SCRAPE picks up self-hosted audit firm citations.
+    for src in all_sources:
         if src.source in (
             AuditSourceKind.WRAPPER_PROGRAM,
             AuditSourceKind.HOMEPAGE_SCRAPE,
+            AuditSourceKind.FACTORY_ATTRIBUTION,
         ):
             under_audited = False
             break

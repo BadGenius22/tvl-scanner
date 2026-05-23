@@ -28,6 +28,7 @@ from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.evm_bytecode_check import check_bytecode_match
+from tvl_scanner.enrich.evm_factory_check import check_factory_attribution
 from tvl_scanner.enrich.github import RepoMetadata, enrich_repo
 from tvl_scanner.enrich.homepage_scrape import (
     rank_github_urls_for_protocol,
@@ -232,6 +233,28 @@ async def enrich_one(
                         f"{bytecode_match.entry.audit_count} prior audits)"
                     ),
                     weight=max(4, bytecode_match.entry.audit_count),
+                )
+            )
+
+        # BATCH N: factory-attribution check. Catches the case where the
+        # bytecode registry is empty/incomplete — calls factory() and matches
+        # against a curated table of well-known DEX factory addresses. The
+        # v0.6.0 scan ranked the canonical Uniswap V3 WBTC/WETH pool at #1
+        # because none of the prior signals fired; this one would have.
+        factory_match = await check_factory_attribution(
+            contract.chain, contract.address, client=client
+        )
+        if factory_match:
+            precomputed_sources.append(
+                AuditSource(
+                    source=AuditSourceKind.FACTORY_ATTRIBUTION,
+                    url=factory_match.entry.audit_url,  # type: ignore[arg-type]
+                    title=(
+                        f"factory() returns {factory_match.entry.name} factory "
+                        f"({factory_match.factory_address}) — pool of audited "
+                        f"upstream protocol {factory_match.entry.upstream_protocol}"
+                    ),
+                    weight=4,
                 )
             )
 
