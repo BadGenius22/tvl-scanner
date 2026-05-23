@@ -239,6 +239,57 @@ async def enrich_one(
                 )
             )
 
+        # BATCH N.5: source-code identifier attribution. When Etherscan
+        # source verification is available and the source declares
+        # `@author <protocol>` or has a meaningful contract_name, match the
+        # author/name against the slug whitelist. Catches verified contracts
+        # whose `name()` returns nothing (e.g. ether.fi TopUpDest is an
+        # ERC1967Proxy named "TopUpDest" with @author ether.fi).
+        verif_identifiers: list[str] = []
+        if verification.source_author:
+            verif_identifiers.append(verification.source_author)
+        if verification.contract_name:
+            verif_identifiers.append(verification.contract_name)
+        if verification.source_title:
+            verif_identifiers.append(verification.source_title)
+        if verification.source_project_dir:
+            verif_identifiers.append(verification.source_project_dir)
+
+        # If the candidate is a proxy with a verified implementation, ALSO
+        # fetch the impl's verification — the proxy's source is just
+        # ERC1967Proxy boilerplate, the protocol identity lives on the impl.
+        if verification.is_proxy and verification.proxy_impl_address:
+            impl_verif = await check_verification(
+                contract.chain, verification.proxy_impl_address, client=client
+            )
+            if impl_verif.source_author:
+                verif_identifiers.append(impl_verif.source_author)
+            if impl_verif.contract_name and impl_verif.contract_name != "ERC1967Proxy":
+                verif_identifiers.append(impl_verif.contract_name)
+            if impl_verif.source_title:
+                verif_identifiers.append(impl_verif.source_title)
+            if impl_verif.source_project_dir:
+                verif_identifiers.append(impl_verif.source_project_dir)
+
+        # Match against the slug whitelist (same prefixes used in score.py).
+        # We import lazily to avoid circular import.
+        from tvl_scanner.audit_check.score import KNOWN_AUDITED_SLUG_PREFIXES
+        for ident in verif_identifiers:
+            ident_clean = ident.lower().replace(".", "-").replace(" ", "-")
+            if any(ident_clean.startswith(p) for p in KNOWN_AUDITED_SLUG_PREFIXES):
+                precomputed_sources.append(
+                    AuditSource(
+                        source=AuditSourceKind.FACTORY_ATTRIBUTION,
+                        url=None,
+                        title=(
+                            f"Verified source identifier '{ident}' matches "
+                            f"known audited protocol family — audit attribution by source"
+                        ),
+                        weight=4,
+                    )
+                )
+                break
+
         # BATCH N: factory-attribution check. Catches the case where the
         # bytecode registry is empty/incomplete — calls factory() and matches
         # against a curated table of well-known DEX factory addresses. The

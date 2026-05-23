@@ -130,6 +130,9 @@ KNOWN_FACTORIES: dict[Chain, dict[str, FactoryEntry]] = {
             "SushiSwap V2", "sushiswap",
             "https://github.com/sushiswap/sushiswap/tree/master/audits",
         ),
+        "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": FactoryEntry(
+            "PancakeSwap V3", "pancakeswap", None,
+        ),
     },
     Chain.ARBITRUM: {
         "0x1f98431c8ad98523631ae4a59f267346ea31f984": FactoryEntry(
@@ -139,6 +142,9 @@ KNOWN_FACTORIES: dict[Chain, dict[str, FactoryEntry]] = {
         "0xc35dadb65012ec5796536bd9864ed8773abc74c4": FactoryEntry(
             "SushiSwap V2", "sushiswap",
             "https://github.com/sushiswap/sushiswap/tree/master/audits",
+        ),
+        "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": FactoryEntry(
+            "PancakeSwap V3", "pancakeswap", None,
         ),
     },
     Chain.BASE: {
@@ -154,11 +160,26 @@ KNOWN_FACTORIES: dict[Chain, dict[str, FactoryEntry]] = {
             "Aerodrome V2", "aerodrome",
             None,
         ),
+        "0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a": FactoryEntry(
+            "Aerodrome Slipstream", "aerodrome", None,
+        ),
+        "0xf8f2eb4940cfe7d13603dddd87f123820fc061ef": FactoryEntry(
+            "Aerodrome Slipstream CLFactory", "aerodrome", None,
+        ),
+        "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": FactoryEntry(
+            "PancakeSwap V3", "pancakeswap", None,
+        ),
+        "0x02a84c1b3bbd7401a5f7fa98a384ebc70bb5749e": FactoryEntry(
+            "PancakeSwap V2", "pancakeswap", None,
+        ),
     },
     Chain.OPTIMISM: {
         "0x1f98431c8ad98523631ae4a59f267346ea31f984": FactoryEntry(
             "Uniswap V3", "uniswap-v3",
             "https://github.com/Uniswap/v3-core/tree/main/audits",
+        ),
+        "0x25cbddb98b35ab1ff77413456b31ec81a6b6b746": FactoryEntry(
+            "Velodrome V2", "velodrome", None,
         ),
     },
     Chain.POLYGON: {
@@ -170,6 +191,9 @@ KNOWN_FACTORIES: dict[Chain, dict[str, FactoryEntry]] = {
             "QuickSwap V2", "quickswap",
             None,
         ),
+        "0x411b0facc3489691f28ad58c47006af5e3ab3a28": FactoryEntry(
+            "QuickSwap V3", "quickswap", None,
+        ),
     },
     Chain.BSC: {
         "0xca143ce32fe78f1f7019d7d551a6402fc5350c73": FactoryEntry(
@@ -179,6 +203,10 @@ KNOWN_FACTORIES: dict[Chain, dict[str, FactoryEntry]] = {
         "0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865": FactoryEntry(
             "PancakeSwap V3", "pancakeswap",
             None,
+        ),
+        "0xdb1d10011ad0ff90774d0c6bb92e5c5c8b4461f7": FactoryEntry(
+            "Uniswap V3 (BSC)", "uniswap-v3",
+            "https://github.com/Uniswap/v3-core/tree/main/audits",
         ),
     },
 }

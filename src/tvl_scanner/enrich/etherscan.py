@@ -25,6 +25,7 @@ Solana records are not Etherscan-addressable and are skipped entirely.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -58,6 +59,17 @@ class VerificationResult:
     compiler_version: str | None = None
     is_proxy: bool = False
     proxy_impl_address: str | None = None
+    # Batch N.5: protocol identifier scraped from verified source comments
+    # (`@author`, `@title`). Useful when contract_name is generic like
+    # "ERC1967Proxy" or "Proxy" but the actual deployed protocol is named
+    # in a Solidity doc comment.
+    source_author: str | None = None
+    source_title: str | None = None
+    # Batch N.7: project directory name extracted from source file paths
+    # (`src/moolah/...` → "moolah"). Often the most reliable protocol
+    # identifier when contract names are generic ("StableSwapPool",
+    # "ERC1967Proxy").
+    source_project_dir: str | None = None
 
 
 _EMPTY_NOT_VERIFIED = VerificationResult(is_verified=False)
@@ -92,12 +104,57 @@ def _parse_etherscan_result(item: dict) -> VerificationResult:
     # Etherscan uses `0x0000...` or empty string for "no impl set"
     impl = impl_raw if _is_evm_address(impl_raw) and int(impl_raw, 16) != 0 else None
 
+    # Batch N.5: pull @author / @title tags from NatSpec comments in the
+    # verified source. Catches protocols whose contract_name is generic
+    # ("ERC1967Proxy", "Proxy") but whose deployed code is uniquely tagged
+    # ("@author ether.fi", "@title TopUpDest"). Cap source scan at 200KB to
+    # bound CPU on outsized contracts.
+    source_code_str = source_code_raw[:200_000] if isinstance(source_code_raw, str) else ""
+    author = None
+    title = None
+    if source_code_str:
+        author_match = re.search(
+            r"@author\s+([\w.\-]+(?:[\s\-][\w.\-]+){0,3})", source_code_str
+        )
+        if author_match:
+            author = author_match.group(1).strip()
+        title_match = re.search(
+            r"@title\s+([\w.\-]+(?:[\s\-][\w.\-]+){0,5})", source_code_str
+        )
+        if title_match:
+            title = title_match.group(1).strip()
+
+    # Batch N.7: extract project directory name from source paths. Pattern:
+    # `src/<protocol>/...` is overwhelmingly used by Foundry/Hardhat projects.
+    # Skip generic prefixes like "interfaces", "libraries", "utils", "test".
+    project_dir = None
+    if source_code_str:
+        # Find all `"src/<name>/..."` and `"contracts/<name>/..."` paths
+        path_dirs: dict[str, int] = {}
+        for m in re.finditer(
+            r'"(?:src|contracts)/([a-z][\w\-]+)/', source_code_str, re.IGNORECASE
+        ):
+            d = m.group(1).lower()
+            if d in {
+                "interfaces", "libraries", "utils", "test", "tests",
+                "mocks", "lib", "common", "shared", "abstract", "types",
+                "errors", "events", "constants",
+            }:
+                continue
+            path_dirs[d] = path_dirs.get(d, 0) + 1
+        if path_dirs:
+            # Pick the most frequent (the project's own code dominates)
+            project_dir = max(path_dirs.items(), key=lambda x: x[1])[0]
+
     return VerificationResult(
         is_verified=True,
         contract_name=str(contract_name_raw),
         compiler_version=str(item.get("CompilerVersion") or "") or None,
         is_proxy=proxy_flag,
         proxy_impl_address=impl,
+        source_author=author,
+        source_title=title,
+        source_project_dir=project_dir,
     )
 
 
@@ -146,6 +203,15 @@ async def check_verification(
     result = payload.get("result")
 
     if status != "1" or not isinstance(result, list) or not result:
+        # Surface the message at INFO so silent partial responses (free-tier
+        # block on certain chains, intermittent rate limits returning status=0
+        # with no exception) become visible. Without this we couldn't tell why
+        # the EtherFi TopUpDest @author scrape didn't fire during scans.
+        msg = payload.get("message") or payload.get("result")
+        log.info(
+            "etherscan getsourcecode returned non-success for %s (chainid %s): %s",
+            address, CHAIN_TO_ETHERSCAN_ID.get(chain), str(msg)[:200],
+        )
         return _EMPTY_NOT_VERIFIED
 
     return _parse_etherscan_result(result[0])

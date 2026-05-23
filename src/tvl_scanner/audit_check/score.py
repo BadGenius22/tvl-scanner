@@ -74,6 +74,55 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "drift",         # Drift Protocol (Solana, multiple audits)
     "kamino",        # Kamino Finance (Ottersec, Trail of Bits)
     "marinade",      # Marinade Finance (Neodyme, Kudelski)
+    # Added Batch N.6 — confirmed via Etherscan source verification
+    # (@author tags) and/or direct docs lookups during real-scan iteration:
+    "nexus",         # Nexus Mutual (iosiro multi, Chaos Labs, G0 Group, Solidified — confirmed)
+    "nexus-mutual",
+    "silo",          # Silo Finance V3 (2+ audits on DefiLlama, established 2022)
+    "alchemix",      # Alchemix V3 (2+ audits on DefiLlama, Trail of Bits history)
+    "zama",          # Zama (homomorphic encryption — audits per their docs)
+    "royco",         # Royco V2 (Sherlock contests)
+    "citrea",        # Citrea Bridge (Code4rena)
+    "lorenzo",       # Lorenzo Protocol (Zellic + multiple per docs)
+    "doublezero",    # DoubleZero (established Solana LST infrastructure)
+    "gmx",           # GMX (Trail of Bits + multiple)
+    "ether.fi",      # EtherFi (Cantina + multiple — also matches source_author with dot)
+    "etherfi",
+    "ostium",        # Ostium Labs (Pashov, Three Sigma)
+    "synthetix",     # Synthetix (well audited)
+    "gauntlet",      # Gauntlet (curator with audited vault impls)
+    "morpho",        # Already injectable but reinforced (Spearbit, Cantina)
+    "sosovalue",     # SosoValue index funds
+    # Smart wallets & multisig singletons — NOT protocols, but heavily audited
+    # and surface as candidates because each user-deployed clone holds funds.
+    # Treating them as "audited" filters them from the under-audited list.
+    "safe",          # Gnosis Safe (SafeProxy, GnosisSafeProxy)
+    "gnosis",
+    "richard-meissner",  # Gnosis Safe lead — appears in @author tag
+    "singleowner",   # SingleOwnerMSCA (ERC-6900 modular smart account)
+    "singleownermsca",
+    "msca",
+    "modularsmart",
+    "smartaccount",
+    "kernel",        # ZeroDev Kernel (modular smart account)
+    "biconomy",      # Biconomy smart account
+    "coinbase",      # Coinbase Smart Wallet
+    # Additional well-audited protocols surfaced as false positives:
+    "avalon",        # Avalon Finance (PeckShield, BlockSec)
+    "dydx",          # dYdX (multiple)
+    "harvest",       # Harvest Finance (multiple)
+    "homora",        # Homora / Alpha Homora V2 (audits per DefiLlama)
+    "alpha",         # Alpha Finance (Homora) — same family
+    "lyra",          # Lyra Finance (Sherlock + multiple)
+    "near",          # NEAR Protocol family
+    # Batch N.7 — identified via Etherscan source paths during real-scan iteration:
+    "moolah",        # Moolah (Lista DAO ecosystem BSC, PeckShield + multi)
+    "lista",         # Lista DAO (audits)
+    "alpaca",        # Alpaca Finance (multiple audits)
+    "stableswap",    # Generic Curve-style — only matches when name() is literally StableSwap*
+    "uniswapv3pool", # Match when verified ContractName is UniswapV3Pool
+    "uniswapv2pair", # Match when verified ContractName is UniswapV2Pair
+    "mstable",       # mStable (multiple audits)
 )
 
 
