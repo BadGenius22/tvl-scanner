@@ -82,7 +82,9 @@ See the plan file for the full design.
 
 When you pick a candidate, say in Claude Code:
 
-> `new audit on <slug> at /home/dewaxindo/audit/<date>-<slug>/`
+> `new audit on <slug> at ~/audit/<date>-<slug>/`
+
+(The base path is configurable via `AUDIT_DIR` in `.env` — default `~/audit`.)
 
 Stage A of the vault's audit-file workflow reads the per-candidate file at `reports/YYYY-MM-DD-scan/candidates/<rank>-<slug>.md`, lifts its YAML fields into a `VAULT_CONTEXT.md` draft, and proposes it for approval per the Phase 2a safety gates. Scanner does not touch the vault directly.
 

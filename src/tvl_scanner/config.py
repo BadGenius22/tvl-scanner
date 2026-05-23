@@ -112,6 +112,7 @@ class Settings(BaseSettings):
     # Paths
     ARTIFACTS_DIR: str = "artifacts"
     REPORTS_DIR: str = "reports"
+    AUDIT_DIR: str = "~/audit"
 
     # API endpoints
     GECKOTERMINAL_BASE: str = "https://api.geckoterminal.com/api/v2"
