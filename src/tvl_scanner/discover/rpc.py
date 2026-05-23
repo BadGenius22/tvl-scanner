@@ -56,6 +56,7 @@ from tvl_scanner.enrich.defillama_prices import (
     _build_coin_key,
     fetch_prices,
 )
+from tvl_scanner.enrich.etherscan import fetch_creation_dates_batch
 from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.http import HttpError, make_client
 from tvl_scanner.models import Chain, DiscoveredContract, DiscoverySource
@@ -133,14 +134,27 @@ _BALANCE_OF_SELECTOR = "0x70a08231"
 # Tunables — kept as constants rather than Settings so they don't pollute the
 # user-facing .env. The 7-day lookback matches the user's stated requirement.
 DEFAULT_LOOKBACK_DAYS = 7
-# Number of small block windows to sample across the lookback range. 25 is a
-# balance: enough samples that a protocol receiving a transfer once-a-day is
-# likely to fall in one window, but few enough that we stay under typical
-# free-tier RPC budgets (~30 calls per chain).
+# Number of small block windows to sample across the lookback range. Tuned
+# alongside DEFAULT_WINDOW_BLOCKS for free-tier RPC budgets. At 50 windows ×
+# 10 blocks per chain × 6 chains the eth_getCode follow-up phase 429'd hard
+# on Alchemy's free tier (38k+ failures in one scan); 25 windows fits within
+# the compute-unit budget while still catching active high-TVL holders.
 DEFAULT_SAMPLE_WINDOWS = 25
-# Per-window block count. Bounded so a busy token (USDC) doesn't return more
-# than the provider's per-call log limit (typically 10k on free tiers).
-DEFAULT_WINDOW_BLOCKS = 50
+# Hard cap on recipients to eth_getCode-check per chain. Ethereum windows can
+# surface 24k+ unique recipient addresses; checking code on all of them is
+# 24k × 19 CU = 456k CU per chain — 25 minutes of sustained free-tier budget
+# just for one chain. Random-sample down to keep the scan in finite time.
+# High-TVL contracts are naturally over-represented in busy windows, so the
+# sample preserves them with high probability even at 1000/24000 = 4%.
+MAX_RECIPIENTS_PER_CHAIN = 1000
+# Per-window block count. Alchemy's free tier rejects eth_getLogs requests
+# spanning more than 10 blocks (-32600 error: "Under the Free tier plan, you
+# can make eth_getLogs requests with up to a 10 block range"). The first real
+# scan with WINDOW_BLOCKS=50 returned 0 recipients on every chain because
+# every call 400'd. 10 is the exact ceiling — using less wastes API budget.
+# Users on a paid tier can override via the per-chain RPC env var by pointing
+# at a node without that limit; the constant itself stays free-tier-safe.
+DEFAULT_WINDOW_BLOCKS = 10
 # Concurrency limits — mirror discover/alchemy.py so a full-chain run stays
 # under Alchemy's free-tier compute-unit budget (300 CU/s).
 LOG_QUERY_CONCURRENCY = 3
@@ -170,24 +184,59 @@ def _rpc_url(chain: Chain) -> str | None:
     return f"https://{subdomain}.g.alchemy.com/v2/{api_key}"
 
 
+_RETRYABLE_STATUS = {429, 502, 503, 504}
+
+
 async def _rpc_call(
-    url: str, method: str, params: list[Any], client: httpx.AsyncClient
+    url: str, method: str, params: list[Any], client: httpx.AsyncClient,
+    *, max_retries: int = 1,
 ) -> Any:
-    """Single JSON-RPC call. Returns the `result` field or None on error."""
-    try:
-        response = await client.post(
-            url,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-        if isinstance(data, dict):
-            return data.get("result")
-        return None
-    except (httpx.HTTPError, ValueError, HttpError) as exc:
-        log.debug("rpc %s failed: %s", method, exc)
-        return None
+    """Single JSON-RPC call with one retry on rate-limit / transient errors.
+
+    `max_retries=1` is a deliberate trade-off: when EVERY call in a batch is
+    429-ing (free-tier compute exhaustion), retrying 3+ times with backoff
+    snowballs into a multi-minute death-spiral. One retry with short backoff
+    catches transient hiccups without serializing the whole scan. The
+    `MAX_RECIPIENTS_PER_CHAIN` cap upstream keeps batches small enough that
+    most calls succeed first try.
+
+    Logs both transport failures (after retries exhausted) and JSON-RPC
+    error responses at INFO so silent provider complaints are visible.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            response = await client.post(
+                url,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                timeout=30.0,
+            )
+            if response.status_code in _RETRYABLE_STATUS and attempt < max_retries:
+                retry_after_raw = response.headers.get("retry-after", "")
+                if retry_after_raw.isdigit():
+                    delay = min(int(retry_after_raw), 5)
+                else:
+                    delay = 2  # short fixed backoff, single retry
+                await asyncio.sleep(delay)
+                continue
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict):
+                if "error" in data:
+                    log.info("rpc %s returned JSON-RPC error: %s", method, data["error"])
+                    return None
+                return data.get("result")
+            return None
+        except (httpx.HTTPError, ValueError, HttpError) as exc:
+            transient = (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code in _RETRYABLE_STATUS
+            ) or isinstance(exc, (httpx.ConnectError, httpx.ReadTimeout))
+            if transient and attempt < max_retries:
+                await asyncio.sleep(2)
+                continue
+            log.info("rpc %s transport failed: %s", method, exc)
+            return None
+    return None
 
 
 def _hex_to_int(h: str | None) -> int:
@@ -222,7 +271,12 @@ def _encode_address_param(address: str) -> str:
 def _sample_windows(
     latest: int, chain: Chain, *, lookback_days: int, windows: int, window_blocks: int
 ) -> list[tuple[int, int]]:
-    """Pick `windows` non-overlapping (from, to) block ranges across lookback."""
+    """Pick `windows` non-overlapping (fromBlock, toBlock) inclusive ranges.
+
+    `window_blocks` is the inclusive block count — a value of 10 returns
+    (s, s+9) tuples so the eth_getLogs call covers exactly 10 blocks. This
+    matters because Alchemy's free tier rejects any wider range.
+    """
     if latest <= 0:
         return []
     block_time = BLOCK_TIME_SECONDS.get(chain, 12.0)
@@ -230,16 +284,16 @@ def _sample_windows(
     window_start = max(0, latest - range_blocks)
     available = latest - window_start
     if available <= window_blocks:
-        return [(window_start, latest)]
+        return [(window_start, min(window_start + window_blocks - 1, latest))]
 
     # Seeded for reproducibility within a scan
     rng = random.Random(latest)
     # Pick `windows` distinct starting block numbers
-    max_start = latest - window_blocks
+    max_start = latest - window_blocks + 1
     if windows >= (max_start - window_start):
-        return [(b, b + window_blocks) for b in range(window_start, max_start)]
+        return [(b, b + window_blocks - 1) for b in range(window_start, max_start)]
     starts = sorted(rng.sample(range(window_start, max_start), windows))
-    return [(s, s + window_blocks) for s in starts]
+    return [(s, s + window_blocks - 1) for s in starts]
 
 
 async def _get_logs_for_window(
@@ -376,18 +430,49 @@ async def fetch_active_holders(
         )
 
         all_recipients: set[str] = set()
+        total_logs = 0
+        empty_windows = 0
+        error_windows = 0
         for log_result in log_results:
             if isinstance(log_result, BaseException):
+                error_windows += 1
                 continue
+            if not log_result:
+                empty_windows += 1
+                continue
+            total_logs += len(log_result)
             all_recipients.update(_extract_recipients(log_result))
 
         log.info(
-            "rpc holders %s: %d unique transfer recipients across sampled windows",
+            "rpc holders %s: %d transfer logs across %d windows "
+            "(%d empty, %d errored) → %d unique recipients",
             chain.value,
+            total_logs,
+            len(windows),
+            empty_windows,
+            error_windows,
             len(all_recipients),
         )
         if not all_recipients:
             return []
+
+        # ── Step 2b: cap recipients to keep eth_getCode batch finite ───────
+        # Without this cap, Ethereum windows can surface 25k+ unique
+        # recipients; checking code on all of them blows the free-tier RPC
+        # budget. Deterministic sample (seeded on latest block) preserves
+        # reproducibility within a scan.
+        if len(all_recipients) > MAX_RECIPIENTS_PER_CHAIN:
+            rng_cap = random.Random(latest + 1)
+            sampled = rng_cap.sample(
+                sorted(all_recipients), MAX_RECIPIENTS_PER_CHAIN
+            )
+            log.info(
+                "rpc holders %s: capping recipients %d → %d for code/balance phase",
+                chain.value,
+                len(all_recipients),
+                MAX_RECIPIENTS_PER_CHAIN,
+            )
+            all_recipients = set(sampled)
 
         # ── Step 3: filter to contracts (eth_getCode != "0x") ───────────────
         code_sem = asyncio.Semaphore(CODE_CHECK_CONCURRENCY)
@@ -401,18 +486,30 @@ async def fetch_active_holders(
         )
 
         contracts: list[str] = []
+        eip7702_count = 0
         for code_result in code_results:
             if isinstance(code_result, BaseException):
                 continue
             addr, code = code_result
-            if code and code != "0x" and code != "0x0":
-                contracts.append(addr)
+            if not code or code == "0x" or code == "0x0":
+                continue
+            # EIP-7702 delegations are EOAs delegated to a contract — the
+            # "code" is 23 bytes starting with `0xef0100`. These are user
+            # smart wallets (Safe, Coinbase Smart Wallet, etc.), NOT
+            # protocols. Filter them out at the discovery boundary so they
+            # never show up as candidates regardless of TVL.
+            code_lower = code.lower()
+            if len(code_lower) == 48 and code_lower.startswith("0xef0100"):
+                eip7702_count += 1
+                continue
+            contracts.append(addr)
 
         log.info(
-            "rpc holders %s: %d of %d recipients are contracts",
+            "rpc holders %s: %d of %d recipients are contracts (%d EIP-7702 EOAs filtered)",
             chain.value,
             len(contracts),
             len(all_recipients),
+            eip7702_count,
         )
         if not contracts:
             return []
@@ -464,7 +561,9 @@ async def fetch_active_holders(
             price_map = await fetch_prices(sorted(unique_coin_keys), client=client)
 
         # ── Step 5c: compute USD TVL per contract, filter ───────────────────
-        kept: list[DiscoveredContract] = []
+        # First pass: build (addr, total_tvl_usd) for everything above threshold
+        # so we know which contracts deserve a creation-date round-trip.
+        survivors: list[tuple[str, float]] = []
         for addr, native_wei, token_balances in valid_results:
             native_value_usd = (native_wei / 1e18) * native_usd
 
@@ -486,17 +585,36 @@ async def fetch_active_holders(
             total_tvl_usd = native_value_usd + erc20_value_usd
             if total_tvl_usd < s.MIN_TVL_USD:
                 continue
+            survivors.append((addr, total_tvl_usd))
 
+        # ── Step 5d: bulk-fetch real deployment dates ───────────────────────
+        # Etherscan V2 supports up to 5 addresses per getcontractcreation call.
+        # Batching N → ceil(N/5) makes the difference between most calls
+        # 429-ing on the free tier (5 req/s) vs. most calls succeeding. We
+        # default first_seen to scan_date only as a fallback for addresses
+        # Etherscan can't resolve — previously this fallback fired on 109 of
+        # 111 candidates and put 5-year-old pools at the top tagged "0d old".
+        survivor_addrs = [addr for addr, _ in survivors]
+        creation_map = await fetch_creation_dates_batch(
+            chain, survivor_addrs, client=client
+        )
+        log.info(
+            "rpc holders %s: resolved creation dates for %d of %d survivors",
+            chain.value,
+            len(creation_map),
+            len(survivor_addrs),
+        )
+
+        kept: list[DiscoveredContract] = []
+        for addr, total_tvl_usd in survivors:
+            first_seen_date = creation_map.get(addr.lower()) or scan_date
             kept.append(
                 DiscoveredContract(
                     chain=chain,
                     address=addr,
                     protocol_guess=None,
                     tvl_usd=total_tvl_usd,
-                    # No on-chain way to know deployment date without an extra
-                    # round-trip; mark as "seen today" so the age filter passes
-                    # and downstream enrichment can refine via DefiLlama etc.
-                    first_seen=scan_date,
+                    first_seen=first_seen_date,
                     unique_users_30d=None,
                     source=DiscoverySource.RPC_ACTIVE_HOLDERS,
                 )

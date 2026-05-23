@@ -108,12 +108,12 @@ def test_extract_recipients_dedupes() -> None:
 def test_sample_windows_returns_distinct_non_overlapping_ranges() -> None:
     latest = 200_000_000
     windows = _sample_windows(
-        latest, Chain.ARBITRUM, lookback_days=7, windows=20, window_blocks=50
+        latest, Chain.ARBITRUM, lookback_days=7, windows=20, window_blocks=10
     )
     assert len(windows) == 20
-    # Each window is exactly 50 blocks
+    # window_blocks is inclusive: a window of 10 spans (s, s+9)
     for from_b, to_b in windows:
-        assert to_b - from_b == 50
+        assert to_b - from_b + 1 == 10
     # Sorted (ascending)
     assert windows == sorted(windows)
     # All within the last 7 days of blocks
@@ -122,6 +122,20 @@ def test_sample_windows_returns_distinct_non_overlapping_ranges() -> None:
     for from_b, to_b in windows:
         assert latest - range_blocks <= from_b
         assert to_b <= latest
+
+
+def test_sample_windows_respects_alchemy_free_tier_ceiling() -> None:
+    """Regression guard: Alchemy free tier rejects eth_getLogs wider than 10
+    blocks. With window_blocks=10 the (fromBlock, toBlock) range must be at
+    most 10 blocks INCLUSIVE — i.e. to - from + 1 <= 10."""
+    windows = _sample_windows(
+        50_000_000, Chain.ETHEREUM, lookback_days=7, windows=5, window_blocks=10
+    )
+    for from_b, to_b in windows:
+        assert (to_b - from_b + 1) <= 10, (
+            f"window {from_b}-{to_b} spans {to_b - from_b + 1} blocks, "
+            "Alchemy free tier rejects > 10"
+        )
 
 
 def test_sample_windows_reproducible_for_same_latest() -> None:
