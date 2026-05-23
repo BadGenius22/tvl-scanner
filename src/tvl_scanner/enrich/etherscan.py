@@ -24,6 +24,7 @@ Solana records are not Etherscan-addressable and are skipped entirely.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -73,6 +74,57 @@ class VerificationResult:
 
 
 _EMPTY_NOT_VERIFIED = VerificationResult(is_verified=False)
+
+# Etherscan free tier: 5 req/sec across the entire account, NOT per endpoint.
+# When the scan fans out per-chain enrichment (3-6 chains × N candidates ×
+# 2 calls each — verification + creation date — plus impl-verification fetches
+# in the @author/@title attribution path), we easily blow past this and get
+# silent NOTOK responses with status=0. A module-level semaphore + minimum
+# spacing keeps us under the ceiling without slowing the rest of the pipeline.
+_ETHERSCAN_MAX_CONCURRENT = 2
+_ETHERSCAN_MIN_INTERVAL_SEC = 0.35
+_etherscan_semaphore: asyncio.Semaphore | None = None
+_etherscan_last_call: float = 0.0
+_etherscan_lock: asyncio.Lock | None = None
+
+
+def _get_etherscan_semaphore() -> asyncio.Semaphore:
+    global _etherscan_semaphore
+    if _etherscan_semaphore is None:
+        _etherscan_semaphore = asyncio.Semaphore(_ETHERSCAN_MAX_CONCURRENT)
+    return _etherscan_semaphore
+
+
+def _get_etherscan_lock() -> asyncio.Lock:
+    global _etherscan_lock
+    if _etherscan_lock is None:
+        _etherscan_lock = asyncio.Lock()
+    return _etherscan_lock
+
+
+async def _throttled_get_json(
+    url: str, *, params: dict, client: httpx.AsyncClient | None
+) -> object:
+    """get_json with a global Etherscan semaphore + min-interval throttle.
+
+    Ensures the free-tier 5 req/sec limit isn't tripped by parallel
+    enrichment fan-out (which previously caused silent NOTOK responses
+    that left contract verification empty and false positives in the
+    under-audited classification).
+    """
+    global _etherscan_last_call
+    sem = _get_etherscan_semaphore()
+    lock = _get_etherscan_lock()
+    async with sem:
+        # Serialize the "wait for min interval" check under a lock — without
+        # it, concurrent acquirers all read the same last_call and burst.
+        async with lock:
+            now = asyncio.get_event_loop().time()
+            elapsed = now - _etherscan_last_call
+            if elapsed < _ETHERSCAN_MIN_INTERVAL_SEC:
+                await asyncio.sleep(_ETHERSCAN_MIN_INTERVAL_SEC - elapsed)
+            _etherscan_last_call = asyncio.get_event_loop().time()
+        return await get_json(url, params=params, client=client)
 
 
 def _is_evm_address(address: str) -> bool:
@@ -189,29 +241,39 @@ async def check_verification(
         "apikey": api_key,
     }
 
-    try:
-        payload = await get_json(url, params=params, client=client)
-    except HttpError as exc:
-        log.info("etherscan verification fetch failed for %s: %s", address, exc)
+    # Retry-on-NOTOK loop. Etherscan rate-limits return HTTP 200 with
+    # `{"status":"0","message":"NOTOK"}` — http.py's retry doesn't catch
+    # that (it's not a 429). We do our own retry here: up to 2 attempts
+    # with a sleep that puts us well outside any rate-limit window.
+    payload: object | None = None
+    for attempt in range(2):
+        try:
+            payload = await _throttled_get_json(url, params=params, client=client)
+        except HttpError as exc:
+            log.info("etherscan verification fetch failed for %s: %s", address, exc)
+            return _EMPTY_NOT_VERIFIED
+
+        if isinstance(payload, dict):
+            status = str(payload.get("status") or "")
+            result = payload.get("result")
+            if status == "1" and isinstance(result, list) and result:
+                break  # success — proceed to parse
+            if attempt == 0:
+                # NOTOK / partial response — wait + retry once
+                await asyncio.sleep(1.5)
+                continue
+            msg = payload.get("message") or payload.get("result")
+            log.info(
+                "etherscan getsourcecode returned non-success for %s (chainid %s): %s",
+                address, CHAIN_TO_ETHERSCAN_ID.get(chain), str(msg)[:200],
+            )
+            return _EMPTY_NOT_VERIFIED
         return _EMPTY_NOT_VERIFIED
 
     if not isinstance(payload, dict):
         return _EMPTY_NOT_VERIFIED
-
-    # Etherscan standard response: {"status": "1", "message": "OK", "result": [...]}
-    status = str(payload.get("status") or "")
     result = payload.get("result")
-
-    if status != "1" or not isinstance(result, list) or not result:
-        # Surface the message at INFO so silent partial responses (free-tier
-        # block on certain chains, intermittent rate limits returning status=0
-        # with no exception) become visible. Without this we couldn't tell why
-        # the EtherFi TopUpDest @author scrape didn't fire during scans.
-        msg = payload.get("message") or payload.get("result")
-        log.info(
-            "etherscan getsourcecode returned non-success for %s (chainid %s): %s",
-            address, CHAIN_TO_ETHERSCAN_ID.get(chain), str(msg)[:200],
-        )
+    if not isinstance(result, list) or not result:
         return _EMPTY_NOT_VERIFIED
 
     return _parse_etherscan_result(result[0])
@@ -259,7 +321,7 @@ async def fetch_creation_dates_batch(
             "apikey": api_key,
         }
         try:
-            payload = await get_json(url, params=params, client=client)
+            payload = await _throttled_get_json(url, params=params, client=client)
         except HttpError as exc:
             log.info(
                 "etherscan creation batch failed (%d addrs on %s): %s",

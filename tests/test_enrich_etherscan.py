@@ -209,10 +209,17 @@ async def test_check_verification_http_error_returns_empty(httpx_mock: HTTPXMock
 async def test_check_verification_status_not_ok_returns_empty(
     httpx_mock: HTTPXMock,
 ) -> None:
-    """status!='1' (e.g. NOTOK) should yield empty VerificationResult."""
+    """status!='1' (e.g. NOTOK) should yield empty VerificationResult.
+
+    Batch N.8: check_verification now retries once on NOTOK (Etherscan
+    rate-limiting comes back as HTTP 200 with status=0, not a 429, so http.py's
+    retry doesn't catch it). The mock needs to be reusable to satisfy both
+    calls.
+    """
     httpx_mock.add_response(
         url="https://api.etherscan.io/v2/api?chainid=42161&module=contract&action=getsourcecode&address=0xABCdef1234567890abcdef1234567890abcdef12&apikey=test-key",
         json={"status": "0", "message": "NOTOK", "result": "Invalid address"},
+        is_reusable=True,
     )
     with patch("tvl_scanner.enrich.etherscan.get_secret", return_value="test-key"):
         result = await check_verification(

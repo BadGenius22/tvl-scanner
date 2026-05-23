@@ -145,6 +145,8 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "li.fi",         # LI.FI aggregator (audits per docs)
     "lifi",
     "across-",
+    "dango",         # Dango Bridge (Hyperlane warp-route deployment)
+    "ekubo",         # Ekubo Protocol DEX (audited by Spearbit, ChainSecurity)
 )
 
 
