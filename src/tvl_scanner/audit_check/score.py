@@ -123,6 +123,28 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "uniswapv3pool", # Match when verified ContractName is UniswapV3Pool
     "uniswapv2pair", # Match when verified ContractName is UniswapV2Pair
     "mstable",       # mStable (multiple audits)
+    # Batch N.8 — bridge / interop infrastructure (false positives where a
+    # protocol deploys stock infra but DefiLlama lists it as a new "protocol"
+    # with audit_count=0):
+    "hyperlane",     # Hyperlane (Abacus Works) — Trail of Bits, Halborn, Zellic
+    "abacus",        # @author: "Abacus Works" (Hyperlane's original org)
+    "hypnative",     # Hyperlane Warp Route contract names
+    "hyperc20",      # HypERC20, HypERC20Collateral
+    "hypxerc20",
+    "wormhole",      # Wormhole (multiple)
+    "axelar",        # Axelar (Halborn + multiple)
+    "layerzero",     # LayerZero (Trail of Bits + multiple)
+    "across",        # Across Protocol (Open Zeppelin + multiple)
+    "stargate",      # Stargate (LayerZero-based, audited)
+    "ccip",          # Chainlink CCIP (heavily audited)
+    "connext",       # Connext (multi-audit)
+    "celer",         # Celer Network
+    "circle",        # Circle CCTP (USDC issuer's own bridge)
+    "cctp",          # CCTP same as above
+    "socket",        # Socket Tech (multiple audits)
+    "li.fi",         # LI.FI aggregator (audits per docs)
+    "lifi",
+    "across-",
 )
 
 
