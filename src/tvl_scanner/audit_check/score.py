@@ -152,6 +152,14 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "erc7540",       # ERC-7540 async vault standard — Lagoon's ERC7540Upgradeable
     "optinproxy",    # Lagoon's OptinProxy contract_name
     "rocksolid",     # RockSolid Network (Lagoon vault deployment, no proprietary code)
+    "flex",          # Flex (Liquity V2 fork; 4 audits including Dedaub May 2026 in repo /audits folder)
+    "flexmeow",      # Flex's GitHub org / brand
+    "liquity",       # Liquity V1/V2 (multiple audits, well-known base)
+    "yuga",          # Yuga Labs (CryptoPunks, BAYC parent — well-resourced security team)
+    "yugalabs",
+    "punks",         # Punks Terminal (Yuga Labs / Lightyear)
+    "lightyear",     # Lightyear (Yuga Labs affiliate building Punks Terminal)
+    "stashfactory",  # contract_name for Punks Terminal Stash Factory
 )
 
 
