@@ -147,6 +147,11 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "across-",
     "dango",         # Dango Bridge (Hyperlane warp-route deployment)
     "ekubo",         # Ekubo Protocol DEX (audited by Spearbit, ChainSecurity)
+    "lagoon",        # Lagoon Finance v0.5.0 vault infrastructure (Spearbit/Cantina)
+    "lagoonvault",   # contract_name "LagoonVault" / "LagoonVaultProxy"
+    "erc7540",       # ERC-7540 async vault standard — Lagoon's ERC7540Upgradeable
+    "optinproxy",    # Lagoon's OptinProxy contract_name
+    "rocksolid",     # RockSolid Network (Lagoon vault deployment, no proprietary code)
 )
 
 
