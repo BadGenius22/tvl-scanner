@@ -152,6 +152,7 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "erc7540",       # ERC-7540 async vault standard — Lagoon's ERC7540Upgradeable
     "optinproxy",    # Lagoon's OptinProxy contract_name
     "rocksolid",     # RockSolid Network (Lagoon vault deployment, no proprietary code)
+    "syntropia",     # Syntropia (Lagoon vault deployment — 3 OptinProxy → impl 0xe50554ec, same as RockSolid)
     "flex",          # Flex (Liquity V2 fork; 4 audits including Dedaub May 2026 in repo /audits folder)
     "flexmeow",      # Flex's GitHub org / brand
     "liquity",       # Liquity V1/V2 (multiple audits, well-known base)
@@ -160,6 +161,20 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "punks",         # Punks Terminal (Yuga Labs / Lightyear)
     "lightyear",     # Lightyear (Yuga Labs affiliate building Punks Terminal)
     "stashfactory",  # contract_name for Punks Terminal Stash Factory
+    "boros",         # Boros (Pendle's yield-trading-on-margin product, boros.pendle.finance)
+    "m0",            # M^0 Labs (ChainSecurity, Spearbit) — Felix USDhl + Nerona use their MToken/HubPortal/JMIExtension
+    "m^0",
+    "m0labs",
+    "m^0-labs",
+    "hubportal",     # M0 Labs cross-chain Portal contract_name
+    "spokeportal",
+    "portal",        # M0 Labs generic Portal abstract base
+    "jmiextension",  # M0 Labs Just-Mint-It extension (used by Nerona)
+    "myieldtoone",   # M0 Labs yield-bearing base
+    "mextension",    # M0 Labs extension base
+    "felix",         # Felix USDhl (M0 Labs deployment for Hyperliquid)
+    "usdhl",
+    "usefelix",
 )
 
 
