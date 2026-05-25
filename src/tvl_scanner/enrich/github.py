@@ -96,6 +96,144 @@ def _estimate_loc(languages: dict[str, int]) -> int:
     return total
 
 
+_ORG_SUFFIX_VARIANTS = (
+    "",            # bare slug ("bima-cdp" → github.com/bima-cdp)
+    "-protocol",   # bima-protocol
+    "-dao",        # bima-dao
+    "-finance",    # bima-finance
+    "-money",      # bima-money
+    "-labs",       # bima-labs
+)
+
+_ORG_NEGATIVE_CACHE: set[str] = set()  # org names confirmed not-found / empty
+_ORG_POSITIVE_CACHE: dict[str, str] = {}  # slug → resolved repo URL
+
+
+def _generate_org_candidates(slug: str, display_name: str | None) -> list[str]:
+    """Produce a deduped list of GitHub org-name guesses for a protocol slug.
+
+    Strategy: tries the slug as-is, then the slug's first token, each with
+    common suffix variants. Also adds the slug-with-dashes-removed for
+    protocols like 'rocketpool' (org name) vs 'rocket-pool' (slug).
+    """
+    if not slug:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+
+    def add(name: str) -> None:
+        n = name.strip().lower()
+        if n and n not in seen and n.isascii() and not n.startswith("-"):
+            seen.add(n)
+            out.append(n)
+
+    s = slug.strip().lower()
+    first_token = s.split("-")[0]
+
+    for base in (s, first_token, s.replace("-", "")):
+        for suffix in _ORG_SUFFIX_VARIANTS:
+            add(base + suffix)
+
+    # Display-name slug variants (e.g. "BIMA CDP" → "bimacdp")
+    if display_name:
+        dn = re.sub(r"[^a-z0-9]+", "", display_name.lower())
+        if dn:
+            for suffix in _ORG_SUFFIX_VARIANTS:
+                add(dn + suffix)
+
+    return out[:8]  # bound API cost
+
+
+async def find_org_with_repos(
+    slug: str | None,
+    display_name: str | None = None,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Try GitHub org-name variants for a protocol slug.
+
+    Returns a `https://github.com/{org}/{repo}` URL for the first org that
+    BOTH exists AND has at least one public repo with a smart-contract
+    language (Solidity/Rust/Move/Cairo/Vyper). Returns None otherwise.
+
+    Rejects empty orgs (G3): an org with public_repos=0 is closed-source
+    and equivalent to no GitHub presence for audit purposes. BIMA's
+    bima-protocol org is the canonical example — exists but has 0 repos.
+
+    Uses process-level caches to avoid duplicate API calls within a scan.
+    """
+    if not slug:
+        return None
+    cache_key = slug.strip().lower()
+    if cache_key in _ORG_POSITIVE_CACHE:
+        return _ORG_POSITIVE_CACHE[cache_key]
+
+    s = settings()
+    headers = _auth_headers()
+
+    for org_name in _generate_org_candidates(slug, display_name):
+        if org_name in _ORG_NEGATIVE_CACHE:
+            continue
+
+        # G3 step 1: does the org exist + have public repos?
+        try:
+            org_info: Any = await get_json(
+                f"{s.GITHUB_API_BASE}/users/{org_name}",
+                headers=headers,
+                client=client,
+            )
+        except HttpError:
+            _ORG_NEGATIVE_CACHE.add(org_name)
+            continue
+
+        if not isinstance(org_info, dict):
+            _ORG_NEGATIVE_CACHE.add(org_name)
+            continue
+
+        public_repos = org_info.get("public_repos", 0)
+        if not isinstance(public_repos, int) or public_repos == 0:
+            _ORG_NEGATIVE_CACHE.add(org_name)
+            log.debug("github: org %s exists but has 0 public repos (G3 reject)", org_name)
+            continue
+
+        # G2 step 2: list repos, pick the first with a smart-contract language
+        try:
+            repos_payload: Any = await get_json(
+                f"{s.GITHUB_API_BASE}/users/{org_name}/repos?sort=updated&per_page=20",
+                headers=headers,
+                client=client,
+            )
+        except HttpError:
+            _ORG_NEGATIVE_CACHE.add(org_name)
+            continue
+
+        if not isinstance(repos_payload, list):
+            continue
+
+        contract_langs = set(_BYTES_PER_LOC.keys()) - {"TypeScript", "JavaScript"}
+        for repo in repos_payload:
+            if not isinstance(repo, dict):
+                continue
+            if repo.get("fork") or repo.get("archived"):
+                continue
+            lang = repo.get("language")
+            if isinstance(lang, str) and lang in contract_langs:
+                url = repo.get("html_url")
+                if isinstance(url, str):
+                    _ORG_POSITIVE_CACHE[cache_key] = url
+                    log.info(
+                        "github: discovered %s via org-name guess (slug=%s)",
+                        url,
+                        slug,
+                    )
+                    return url
+
+        # Org has repos but none look like smart-contract code
+        _ORG_NEGATIVE_CACHE.add(org_name)
+
+    return None
+
+
 async def enrich_repo(
     url: str | None, *, client: httpx.AsyncClient | None = None
 ) -> RepoMetadata | None:

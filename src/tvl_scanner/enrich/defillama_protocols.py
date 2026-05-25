@@ -253,14 +253,24 @@ async def _process_protocol(
         if dl_audit_count is None:
             dl_audit_count = _coerce_audit_count(protocol.get("audits"))
 
-        # github_url resolution: flat catalog → detail → curated registry → None
-        # BATCH I fix #1: curated seed file as the final fallback, covering
+        # github_url resolution: flat catalog → detail → curated registry →
+        # org-name auto-guess (G2+G3) → None.
+        # BATCH I fix #1: curated seed file as a fallback, covering
         # ~50 well-known protocols whose DefiLlama entries lack a github URL.
+        # BATCH P (G2+G3): when no curated entry exists, try GitHub org-name
+        # variants (slug, slug-protocol, slug-dao, ...) and accept only orgs
+        # with at least one non-fork repo in a smart-contract language. This
+        # catches protocols like Templar where DefiLlama lacks a github field
+        # but a public github.com/<slug>-protocol org exists, AND correctly
+        # rejects orgs like bima-protocol that exist but have 0 public repos.
         github_url = _extract_github_url(protocol)
         if not github_url and detail:
             github_url = _extract_github_url(detail)
         if not github_url:
             github_url = github_registry.lookup(slug)
+        if not github_url:
+            from tvl_scanner.enrich.github import find_org_with_repos
+            github_url = await find_org_with_repos(slug, name, client=client)
 
         repo_metadata = None
         if github_url:

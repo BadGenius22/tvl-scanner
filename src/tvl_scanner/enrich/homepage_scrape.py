@@ -427,6 +427,36 @@ def derive_candidate_urls(
         for path in _AUDIT_PATHS:
             add(primary_domain + path)
 
+    # 2b. docs.<slug> + app.<slug> subdomain probes (G1).
+    # Many protocols host audit pages on docs.<slug>.<tld> rather than the
+    # root domain. Example: docs.bima.money/security exists but bima.money
+    # has no /security path. Step 3 below only STRIPS docs./app., never
+    # ADDS them — so a protocol whose homepage is bima.money never gets
+    # docs.bima.money/security probed without this step.
+    # Tightly scoped: 2 subdomains × top-4 audit paths × {.com + inferred TLD
+    # from base_url, if different} keeps this under ~16 added URLs.
+    if slug:
+        _HIGH_SIGNAL_AUDIT_PATHS = (
+            "/security",
+            "/security/audits",
+            "/audits",
+            "/audit-reports",
+        )
+        _SUBDOMAIN_TLDS = ["com"]
+        if base_url and isinstance(base_url, str) and base_url.startswith("http"):
+            try:
+                base_tld = urlparse(base_url).netloc.rsplit(".", 1)[-1].lower()
+                if base_tld and base_tld != "com" and base_tld.isalpha():
+                    _SUBDOMAIN_TLDS.append(base_tld)
+            except (ValueError, AttributeError):
+                pass
+        for subdomain in ("docs", "app"):
+            for tld in _SUBDOMAIN_TLDS:
+                sub_base = f"https://{subdomain}.{slug}.{tld}"
+                add(sub_base)
+                for path in _HIGH_SIGNAL_AUDIT_PATHS:
+                    add(sub_base + path)
+
     # 3. Base URL's domain root + audit paths (subdomain stripped)
     if base_url and isinstance(base_url, str) and base_url.startswith("http"):
         try:
@@ -463,12 +493,12 @@ def derive_candidate_urls(
             add(domain_base)
             for path in _AUDIT_PATHS:
                 add(domain_base + path)
-                if len(candidates) >= 25:
+                if len(candidates) >= 50:
                     break
-            if len(candidates) >= 25:
+            if len(candidates) >= 50:
                 break
 
-    return candidates[:25]
+    return candidates[:50]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
