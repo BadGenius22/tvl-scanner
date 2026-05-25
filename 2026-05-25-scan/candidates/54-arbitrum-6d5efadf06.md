@@ -1,0 +1,90 @@
+---
+target_name: arbitrum-6d5efadf06
+display_name: arbitrum:0x6d5efadf…
+protocol_type: unknown protocol on arbitrum
+languages:
+- solidity
+chains:
+- arbitrum
+inferred_platform: private
+inferred_mode: private
+audit_density_score: 0
+audit_sources_found: []
+under_audited: true
+edge_match_keywords: []
+focus_areas_suggested:
+- ⚠ UNVERIFIED on Etherscan — source code is not public. Confirm the team has a plan
+  to verify before committing audit time; auditing unverified bytecode is rarely productive.
+- Brand-new contract (20d old) — check initialization racing, first-caller bootstrap
+  invariants
+- No prior audits found in any source — start with standard sanity pass before specialized
+  depth
+bounty_program: none
+bounty_url: null
+bounty_max_payout_usd: null
+tvl_usd: 181533.09489292212
+first_seen: '2026-05-05'
+age_days: 20
+unique_users_30d: null
+github_repo: null
+loc_estimate: null
+docs_url: null
+primary_contract: arbitrum:0x6d5efadf067031054c63db2d4b32ebd2f78e1797
+priority_score: 5.96
+why_interesting: unknown protocol on arbitrum • $181,533 TVL • 20d old • no prior
+  audits found
+scan_date: '2026-05-25'
+is_verified: false
+contract_name: null
+is_proxy: false
+proxy_impl_address: null
+compiler_version: null
+defillama_audit_count: null
+defillama_audit_note: null
+---
+
+# arbitrum:0x6d5efadf…
+
+> unknown protocol on arbitrum • $181,533 TVL • 20d old • no prior audits found
+
+## Summary
+
+- **Chain**: arbitrum
+- **Primary contract**: `arbitrum:0x6d5efadf067031054c63db2d4b32ebd2f78e1797`
+- **TVL**: $182K (181,533)
+- **Age**: 20d (first seen 2026-05-05)
+- **Languages**: solidity
+
+## On-chain verification (Etherscan V2)
+
+- **Status**: ✗ UNVERIFIED
+  - ⚠ **Red flag**: the deployed bytecode is not verified on Etherscan. Either the team hasn't verified yet (ultra-fresh deployment) or they're hiding source. Do not audit without source — confirm the team has a plan to verify before committing time.
+
+## Audit history
+
+- **Audit density score**: 0 (under-audited)
+- **No audits found** in any checked source.
+
+## Priority breakdown
+
+- **Composite**: 5.96 / 10
+  - tvl: 1.3 × 0.25
+  - freshness: 9.4 × 0.20
+  - audit_gap: 10.0 × 0.30
+  - activity: 5.0 × 0.15
+  - edge_match: 0.0 × 0.10 (keywords: none)
+  - bounty: 0.0 × 0.10
+
+## Suggested focus areas
+
+- ⚠ UNVERIFIED on Etherscan — source code is not public. Confirm the team has a plan to verify before committing audit time; auditing unverified bytecode is rarely productive.
+- Brand-new contract (20d old) — check initialization racing, first-caller bootstrap invariants
+- No prior audits found in any source — start with standard sanity pass before specialized depth
+
+## Vault handoff (Phase 2a)
+
+To audit this candidate, say to Claude Code:
+
+> `new audit on arbitrum-6d5efadf06 at ~/audit/2026-05-25-arbitrum-6d5efadf06/`
+
+Stage A will read this file, lift the YAML frontmatter fields into VAULT_CONTEXT.md (sections 1/2/6/7), grep the vault for applicable patterns and case studies (sections 3/4), and propose the full file per Phase 2a safety gates.
