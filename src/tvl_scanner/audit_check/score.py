@@ -175,6 +175,14 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "felix",         # Felix USDhl (M0 Labs deployment for Hyperliquid)
     "usdhl",
     "usefelix",
+    "orca",          # Orca DEX (major Solana AMM — Halborn, Kudelski audits)
+    "cooler",        # Cooler Loans (OlympusDAO product — Yaudit + Sherlock contest)
+    "olympus",       # OlympusDAO (parent of Cooler Loans — multiple audits)
+    "yield-basis",   # Yield Basis (Curve Finance / Michael Egorov — audited)
+    "yieldbasis",
+    "tensor",        # Tensor (major Solana NFT marketplace — Halborn audit)
+    "tensorians",
+    "tensorhq",
 )
 
 
