@@ -31,3 +31,22 @@
 - slug: lido-on-solana
   mint: 7dHbWXmci3dT8UFYWYZweBLXgycu7Y3iL6trKn1Y7ARj
   stake_pool: 49Yi1TKkNyYjPAFdR9LBvoHcUjuPX4Df5T5yv39w2XTn
+
+# Sanctum-deployed validator LSTs (owner program SP12tWFx... or SPMBzsVU...).
+# stake_pool is verified on-chain as owned by a registered wrapper program.
+# mint addresses can be added later; wrapper detection only needs stake_pool.
+
+- slug: dfdv-staked-sol
+  stake_pool: pyZMBjpWsVjKANAYK5mpNbKiws2krjRPZ2N2UYCSnbP  # Sanctum SPL Stake Pool
+
+- slug: adrastea-validator
+  stake_pool: 2XhsHdwf4ZDpp2JhpTqPovoVy3L2Atfp1XkLqFMwGP4Y  # Sanctum SPL Stake Pool
+
+- slug: lantern-staked-sol
+  stake_pool: LW3qEdGWdVrxNgxSXW8vZri7Jifg4HuKEQ1UABLxs3C  # Sanctum SPL Stake Pool
+
+- slug: starke-staked-sol
+  stake_pool: 6LXCxeyQZqdAL4yLCtgATFYF6dcayWvsiwjtBFYVfb1N  # Sanctum SPL Stake Pool
+
+- slug: hylo-lsts
+  stake_pool: hy1oDeVCVRDGkxS26qLVDvRhDpZGfWJ6w9AMvwMegwL  # Sanctum SPL Multi-Stake Pool

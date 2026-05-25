@@ -99,10 +99,15 @@ def load_wrapper_registry() -> dict[str, WrapperProgramEntry]:
 
 @dataclass(frozen=True)
 class LstRegistryEntry:
-    """One LST registry entry: links a DefiLlama slug to its on-chain accounts."""
+    """One LST registry entry: links a DefiLlama slug to its on-chain accounts.
+
+    Either `mint` or `stake_pool` (or both) must be set. `mint` is required
+    for the J2 on-chain TVL sanity check; `stake_pool` is required for the
+    J1 wrapper-program detection via check_lst_wrapper.
+    """
 
     slug: str
-    mint: str
+    mint: str | None = None
     stake_pool: str | None = None
 
 
@@ -127,12 +132,17 @@ def load_lst_mint_registry() -> dict[str, LstRegistryEntry]:
         slug = item.get("slug")
         mint = item.get("mint")
         stake_pool = item.get("stake_pool")
-        if isinstance(slug, str) and isinstance(mint, str):
-            mapping[slug.strip().lower()] = LstRegistryEntry(
-                slug=slug.strip().lower(),
-                mint=mint.strip(),
-                stake_pool=stake_pool.strip() if isinstance(stake_pool, str) else None,
-            )
+        if not isinstance(slug, str):
+            continue
+        # Accept entries with mint OR stake_pool (or both). Wrapper-detection
+        # only needs stake_pool; TVL sanity check only needs mint.
+        if not isinstance(mint, str) and not isinstance(stake_pool, str):
+            continue
+        mapping[slug.strip().lower()] = LstRegistryEntry(
+            slug=slug.strip().lower(),
+            mint=mint.strip() if isinstance(mint, str) else None,
+            stake_pool=stake_pool.strip() if isinstance(stake_pool, str) else None,
+        )
     log.info("loaded %d solana LST mint entries", len(mapping))
     return mapping
 
@@ -232,7 +242,7 @@ async def compute_on_chain_lst_tvl(
         return None
     registry = load_lst_mint_registry()
     entry = registry.get(slug.strip().lower())
-    if not entry:
+    if not entry or not entry.mint:
         return None
     supply = await fetch_lst_supply(entry.mint, client=client)
     if supply is None:

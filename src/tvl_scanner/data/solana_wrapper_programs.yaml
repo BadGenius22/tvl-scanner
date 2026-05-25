@@ -56,3 +56,15 @@
   audit_count: 99
   audit_url: https://github.com/solana-labs/solana
   description: Solana core BPF loader. Part of the L1.
+
+- program_id: SP12tWFxD9oJsVWNavTTBZvMbA6gkAmxtVgxdqvyvhY
+  name: Sanctum SPL Stake Pool (Igneous Labs fork)
+  audit_count: 1
+  audit_url: https://github.com/igneous-labs/sanctum-spl-stake-pool
+  description: Sanctum's fork of SPL Stake Pool used to deploy validator-specific LSTs. Upstream SPL Stake Pool audited by Neodyme 2023-01-31; Sanctum fork by Igneous Labs. Observed owners DFDV Staked SOL, Adrastea Validator, Lantern Staked SOL, Starke Staked SOL.
+
+- program_id: SPMBzsVUuoHA4Jm6KunbsotaahvVikZs1JyTW6iJvbn
+  name: Sanctum SPL Multi-Stake Pool (Igneous Labs fork)
+  audit_count: 1
+  audit_url: https://github.com/igneous-labs/sanctum-spl-stake-pool
+  description: Sanctum's multi-validator stake pool variant. Same audited substrate as the single-validator fork. Observed owner Hylo LSTs.
