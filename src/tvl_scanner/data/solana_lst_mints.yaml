@@ -50,3 +50,6 @@
 
 - slug: hylo-lsts
   stake_pool: hy1oDeVCVRDGkxS26qLVDvRhDpZGfWJ6w9AMvwMegwL  # Sanctum SPL Multi-Stake Pool
+
+- slug: stronghold-staked-sol
+  stake_pool: GZDX5JYXDzCEDL3kybhjN7PSixL4ams3M2G4CvWmMmm5  # Sanctum SPL Stake Pool

@@ -183,6 +183,11 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
     "tensor",        # Tensor (major Solana NFT marketplace — Halborn audit)
     "tensorians",
     "tensorhq",
+    "project-0",     # Project 0 (MarginFi v2 group deployment — see DefiLlama adapter projects/p0)
+    "project0",
+    "p0",
+    "marginfi",      # MarginFi (OtterSec, Mad Shield, Quantstamp, Cantina audits)
+    "mrgn",          # MarginFi domain prefix (mrgn.app)
 )
 
 
