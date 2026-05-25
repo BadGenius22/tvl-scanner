@@ -108,6 +108,24 @@ _ORG_SUFFIX_VARIANTS = (
 _ORG_NEGATIVE_CACHE: set[str] = set()  # org names confirmed not-found / empty
 _ORG_POSITIVE_CACHE: dict[str, str] = {}  # slug → resolved repo URL
 
+# Circuit breaker: if rate-limit / transport errors exceed this count during a
+# single scan, stop calling find_org_with_repos for the rest of the run. Avoids
+# burning the rest of the per-protocol budget on calls that all return 429.
+_RATE_LIMIT_ERRORS = 0
+_RATE_LIMIT_BUDGET = 5
+
+
+def _is_rate_limit_error(exc: HttpError) -> bool:
+    """Detect rate-limit (429) and forbidden (403) responses from GitHub.
+
+    The 403 case matters because GitHub returns 403 with a rate-limit
+    message body, not 429, when an authenticated client exceeds its
+    secondary rate limit. Both must be treated as transient — NOT cached
+    as 'org does not exist'.
+    """
+    msg = str(exc).lower()
+    return "429" in msg or "rate limited" in msg or "rate limit exceeded" in msg
+
 
 def _generate_org_candidates(slug: str, display_name: str | None) -> list[str]:
     """Produce a deduped list of GitHub org-name guesses for a protocol slug.
@@ -141,7 +159,7 @@ def _generate_org_candidates(slug: str, display_name: str | None) -> list[str]:
             for suffix in _ORG_SUFFIX_VARIANTS:
                 add(dn + suffix)
 
-    return out[:8]  # bound API cost
+    return out[:4]  # bound API cost — top variants only ({slug}, {first}, {slug}-protocol, {first}-protocol)
 
 
 async def find_org_with_repos(
@@ -168,8 +186,21 @@ async def find_org_with_repos(
     if cache_key in _ORG_POSITIVE_CACHE:
         return _ORG_POSITIVE_CACHE[cache_key]
 
+    # Circuit breaker: if we've hit too many rate-limit errors this scan,
+    # don't waste the rest of the GitHub API budget on G2 calls. Auth may
+    # be broken (e.g. GPG cache expired) — surface the gap once and move on.
+    global _RATE_LIMIT_ERRORS
+    if _RATE_LIMIT_ERRORS >= _RATE_LIMIT_BUDGET:
+        return None
+
     s = settings()
     headers = _auth_headers()
+    if "Authorization" not in headers:
+        log.warning(
+            "github: find_org_with_repos called without auth header — "
+            "G2 will exhaust unauth (60/hr) limit quickly. Prime `pass show "
+            "tvl-scanner/github` to restore GPG cache."
+        )
 
     for org_name in _generate_org_candidates(slug, display_name):
         if org_name in _ORG_NEGATIVE_CACHE:
@@ -182,7 +213,18 @@ async def find_org_with_repos(
                 headers=headers,
                 client=client,
             )
-        except HttpError:
+        except HttpError as exc:
+            if _is_rate_limit_error(exc):
+                _RATE_LIMIT_ERRORS += 1
+                # Transient — do NOT cache as confirmed-not-found
+                if _RATE_LIMIT_ERRORS >= _RATE_LIMIT_BUDGET:
+                    log.warning(
+                        "github: G2 circuit-breaker tripped after %d rate-limit "
+                        "errors. Disabling find_org_with_repos for the rest of "
+                        "this scan.",
+                        _RATE_LIMIT_ERRORS,
+                    )
+                return None
             _ORG_NEGATIVE_CACHE.add(org_name)
             continue
 
@@ -203,7 +245,10 @@ async def find_org_with_repos(
                 headers=headers,
                 client=client,
             )
-        except HttpError:
+        except HttpError as exc:
+            if _is_rate_limit_error(exc):
+                _RATE_LIMIT_ERRORS += 1
+                return None
             _ORG_NEGATIVE_CACHE.add(org_name)
             continue
 
