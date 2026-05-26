@@ -58,6 +58,7 @@ async def run_pipeline(
     scan_date: date | None = None,
     cutoff: float = 5.0,
     cap: int = 50,
+    exclude_slugs: set[str] | None = None,
 ) -> Path:
     """Run the full pipeline. Two parallel discovery paths (address-based pools
     and protocol-level catalog) feed into unified enrichment and ranking.
@@ -107,7 +108,13 @@ async def run_pipeline(
     log.info("audit-check: %d / %d are under-audited", n_under, len(audited))
 
     log.info("=== Stage 4: Rank + Report ===")
-    ranked = rank_all(audited, scan_date=scan_date, cutoff=cutoff, cap=cap)
+    ranked = rank_all(
+        audited,
+        scan_date=scan_date,
+        cutoff=cutoff,
+        cap=cap,
+        exclude_slugs=exclude_slugs,
+    )
     summary_path, candidate_paths = write_report(ranked, scan_date)
     log.info(
         "ranked %d candidates (cutoff=%.1f, cap=%d); wrote %d per-candidate files",

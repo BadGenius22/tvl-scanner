@@ -270,9 +270,17 @@ def rank_all(
     scan_date: date,
     cutoff: float = PRIORITY_CUTOFF,
     cap: int = 50,
+    exclude_slugs: set[str] | None = None,
 ) -> list[CandidateRecord]:
-    """Rank, filter by cutoff, sort descending, cap at `cap` candidates."""
+    """Rank, filter by cutoff, sort descending, cap at `cap` candidates.
+
+    `exclude_slugs` (case-insensitive) removes already-processed protocols so
+    a follow-up scan can surface only fresh candidates.
+    """
     ranked = [rank_candidate(c, scan_date=scan_date) for c in candidates]
     kept = [r for r in ranked if r.priority_score >= cutoff]
+    if exclude_slugs:
+        skip = {s.strip().lower() for s in exclude_slugs if s.strip()}
+        kept = [r for r in kept if (r.target_name or "").lower() not in skip]
     kept.sort(key=lambda r: r.priority_score, reverse=True)
     return kept[:cap]

@@ -57,6 +57,13 @@ def run(
     ),
     cutoff: float = typer.Option(5.0, "--cutoff", help="Priority cutoff for inclusion in report."),
     cap: int = typer.Option(50, "--cap", help="Maximum candidates in report."),
+    exclude_slugs_file: str | None = typer.Option(
+        None,
+        "--exclude-slugs-file",
+        help="Path to a file with one slug per line (or one slug per markdown table row). "
+        "Excluded slugs are removed from the ranked output before the cap is applied — "
+        "useful for follow-up scans that should surface only fresh candidates.",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", help="Python logging level."),
 ) -> None:
     """Run the full discover → enrich → audit-check → rank pipeline."""
@@ -73,14 +80,46 @@ def run(
     else:
         chain_list = [Chain(c) for c in s.chain_list]
 
+    exclude_slugs: set[str] = set()
+    if exclude_slugs_file:
+        import re
+        from pathlib import Path
+        path = Path(exclude_slugs_file).expanduser()
+        if not path.is_file():
+            console.print(f"[red]exclude-slugs-file not found: {path}[/]")
+            raise typer.Exit(code=1)
+        for line in path.read_text().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            # Tolerate markdown table cells like `| Protocol | … |` — extract slug-like token
+            tokens = [t.strip() for t in stripped.split("|")]
+            for token in tokens or [stripped]:
+                if not token:
+                    continue
+                # Take the first token that looks like a slug (lowercase, hyphenated)
+                slug = re.sub(r"[^a-z0-9-]", "", token.lower())
+                if slug:
+                    exclude_slugs.add(slug)
+                    break
+        console.print(f"[yellow]Excluding {len(exclude_slugs)} slug(s) from {path.name}[/]")
+
     console.print(
         f"[bold cyan]tvl-scanner {__version__}[/]  "
         f"chains={', '.join(c.value for c in chain_list)}  "
         f"min_tvl=${s.MIN_TVL_USD:,}  "
         f"cutoff={cutoff}  cap={cap}"
+        f"{f'  exclude={len(exclude_slugs)}' if exclude_slugs else ''}"
     )
 
-    summary = asyncio.run(run_pipeline(chain_list, cutoff=cutoff, cap=cap))
+    summary = asyncio.run(
+        run_pipeline(
+            chain_list,
+            cutoff=cutoff,
+            cap=cap,
+            exclude_slugs=exclude_slugs or None,
+        )
+    )
     console.print(f"\n[bold green]✓ Report written:[/] {summary}")
 
 
