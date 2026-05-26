@@ -57,6 +57,97 @@ def test_pattern_dictionaries_are_non_empty() -> None:
     assert "trail_of_bits" in tags
     assert "halborn" in tags
     assert "zellic" in tags
+    # 2026-05-26: rho-x-lp-vault regression — these firms had been missing.
+    assert "zokyo" in tags
+    assert "oxor" in tags
+    assert "ottersec" in tags
+    assert "cantina" in tags
+    assert "hacken" in tags
+
+
+# Synthetic rho.trading-style page: audit firm logos with direct links to
+# the audit artifact, where the firm name appears in the URL but not as
+# plaintext body text. This is the SPA pattern that defeated the original
+# AUDIT_FIRM_PHRASES regex on rho.trading and caused rho-x-lp-vault to
+# surface as a false-positive "under-audited" candidate in 2026-05-25-scan.
+RHO_TRADING_AUDITS_HTML = """
+<html><head><title>Rho — Yield</title></head>
+<body>
+<section class="security-section">
+<h2 class="security-section-title">Security Audits</h2>
+<p>We have successfully completed a smart contract audit with leading firms.</p>
+<a href="https://audits.oxor.io/reports/-NsF0vIwYyzQJhrgL2nf" class="audits-logo-container">
+  <img src="/oxor_logo.svg" alt="" class="security-logo"/>
+</a>
+<a href="https://github.com/zokyo-sec/audit-reports/blob/main/Rho%20Labs/Rho_Labs_Zokyo_audit_report_Sep23rd_2025.pdf" class="audits-logo-container">
+  <img src="/zokyo_logo.svg" alt="" class="security-logo"/>
+</a>
+<a href="https://www.halborn.com/audits/rho-labs/vault-contracts-v2-9d7cbb" class="audits-logo-container">
+  <img src="/halborn_logo.svg" alt="" class="security-logo"/>
+</a>
+</section>
+</body></html>
+"""
+
+
+async def test_scrape_homepage_catches_rho_trading_audit_links(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """Regression for rho-x-lp-vault: the rho.trading homepage embeds Halborn,
+    Zokyo, and oXor audit logos via direct anchor links to the audit reports.
+    The plaintext "Halborn" word appears in body text, but "Zokyo" and "oXor"
+    appear ONLY inside URLs. The AUDIT_FIRM_URL_PATTERNS fingerprint pass
+    must catch all three.
+    """
+    httpx_mock.add_response(
+        url="https://www.rho.trading/", text=RHO_TRADING_AUDITS_HTML
+    )
+    result = await scrape_homepage("https://www.rho.trading/")
+    assert result.fetched is True
+    assert "halborn" in result.audit_firm_matches
+    assert "zokyo" in result.audit_firm_matches
+    assert "oxor" in result.audit_firm_matches
+
+
+async def test_scrape_homepage_catches_audit_url_without_firm_name_text(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """URL fingerprint regex must fire even when the firm name appears ONLY
+    inside the URL (no plaintext mention, no audit-context word required).
+    This is the hardest SPA case — server-rendered HTML carries the link
+    but the rest of the page is JS-rendered.
+    """
+    html = """
+    <html><body>
+    <a href="https://audits.oxor.io/reports/abc"><img src="/logo.svg"/></a>
+    <a href="https://github.com/zokyo-sec/audit-reports/blob/main/Foo.pdf"><img src="/z.svg"/></a>
+    </body></html>
+    """
+    httpx_mock.add_response(url="https://example.com/", text=html)
+    result = await scrape_homepage("https://example.com/")
+    assert result.fetched is True
+    assert "oxor" in result.audit_firm_matches
+    assert "zokyo" in result.audit_firm_matches
+
+
+async def test_scrape_homepage_truncation_cap_at_400k(httpx_mock: HTTPXMock) -> None:
+    """rho.trading is 204KB — the audit logos live at byte ~118K. With the
+    original 200KB cap, a slightly larger page would push firms out of range.
+    The current 400KB cap gives meaningful headroom. Verify a 300KB page
+    with firms past the 200K mark still triggers detection.
+    """
+    padding = "<div>." * 35_000  # ~245KB of filler in front
+    html = (
+        "<html><body>" + padding +
+        "<p>Audited by</p>"
+        "<a href='https://www.halborn.com/audits/foo/bar'>halborn</a>"
+        "</body></html>"
+    )
+    assert 200_000 < len(html) < 400_000, f"test fixture out of range: {len(html)}"
+    httpx_mock.add_response(url="https://big.example.com/", text=html)
+    result = await scrape_homepage("https://big.example.com/")
+    assert result.fetched is True
+    assert "halborn" in result.audit_firm_matches
 
 
 async def test_scrape_homepage_invalid_url_returns_empty() -> None:

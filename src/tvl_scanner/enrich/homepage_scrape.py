@@ -102,11 +102,15 @@ AUDIT_FIRM_PHRASES: dict[re.Pattern[str], str] = {
     re.compile(r"\btrail of bits\b", re.I): "trail_of_bits",
     re.compile(r"\bhalborn\b", re.I): "halborn",
     re.compile(r"\bzellic\b", re.I): "zellic",
+    re.compile(r"\bzokyo\b", re.I): "zokyo",
+    re.compile(r"\boxor\b", re.I): "oxor",
+    re.compile(r"\bottersec\b", re.I): "ottersec",
     re.compile(r"\bchainsecurity\b", re.I): "chain_security",
     re.compile(r"\bopenzeppelin\b", re.I): "openzeppelin",
     re.compile(r"\bcyfrin\b", re.I): "cyfrin",
     re.compile(r"\bhexens\b", re.I): "hexens",
     re.compile(r"\bspearbit\b", re.I): "spearbit",
+    re.compile(r"\bcantina\b", re.I): "cantina",
     re.compile(r"\bquantstamp\b", re.I): "quantstamp",
     re.compile(r"\bcertik\b", re.I): "certik",
     re.compile(r"\bsigma prime\b", re.I): "sigma_prime",
@@ -116,6 +120,64 @@ AUDIT_FIRM_PHRASES: dict[re.Pattern[str], str] = {
     re.compile(r"\bmacro\b", re.I): "macro",
     re.compile(r"\bcode4rena\b", re.I): "code4rena",
     re.compile(r"\bsherlock\b", re.I): "sherlock",
+    # Added 2026-05-26 after rho-x-lp-vault false positive — these firms
+    # cover most contemporary DeFi audits absent from the original list.
+    re.compile(r"\bhacken\b", re.I): "hacken",
+    re.compile(r"\bveridise\b", re.I): "veridise",
+    re.compile(r"\bpashov\b", re.I): "pashov",
+    re.compile(r"\bdedaub\b", re.I): "dedaub",
+    re.compile(r"\backee blockchain\b", re.I): "ackee",
+    re.compile(r"\bruntime verification\b", re.I): "runtime_verification",
+    re.compile(r"\babdk\b", re.I): "abdk",
+    re.compile(r"\bmixbytes\b", re.I): "mixbytes",
+    re.compile(r"\bbeosin\b", re.I): "beosin",
+    re.compile(r"\bquill audits\b", re.I): "quill_audits",
+    re.compile(r"\bsolidified\b", re.I): "solidified",
+    re.compile(r"\bstatemind\b", re.I): "statemind",
+    re.compile(r"\bpessimistic\b", re.I): "pessimistic",
+    re.compile(r"\bnethermind\b", re.I): "nethermind",
+    re.compile(r"\bsec3\b", re.I): "sec3",
+    re.compile(r"\bkudelski\b", re.I): "kudelski",
+    re.compile(r"\btrust security\b", re.I): "trust_security",
+    re.compile(r"\bthree sigma\b", re.I): "three_sigma",
+    re.compile(r"\bimmunebytes\b", re.I): "immunebytes",
+    re.compile(r"\bsalus\b", re.I): "salus",
+}
+
+
+# Audit-firm URL fingerprints. Some homepages embed the audit firm via
+# <img> logos and direct links to the audit artifact, with the firm name
+# appearing only inside the URL (not as plaintext on the page). The
+# Wayback/SPA case is the most common: the page renders the audit logos
+# but the literal firm name lives inside the href, not in body text.
+# Example (rho.trading homepage on 2026-05-26):
+#     <a href="https://www.halborn.com/audits/rho-labs/vault-contracts-v2-9d7cbb">
+#     <a href="https://github.com/zokyo-sec/audit-reports/...">
+#     <a href="https://audits.oxor.io/reports/...">
+# When the regular AUDIT_FIRM_PHRASES regex misses (because the SPA's
+# server-rendered HTML carries the link but no firm-name text), these
+# patterns catch the linked URL itself. Match is on substring; the URL
+# domain or path embeds the firm's brand and is unambiguous evidence
+# of an audit citation.
+AUDIT_FIRM_URL_PATTERNS: dict[re.Pattern[str], str] = {
+    re.compile(r"https?://(?:www\.)?halborn\.com/audits/", re.I): "halborn",
+    re.compile(r"https?://github\.com/zokyo-sec/", re.I): "zokyo",
+    re.compile(r"https?://(?:www\.)?zokyo\.io/", re.I): "zokyo",
+    re.compile(r"https?://audits\.oxor\.io/", re.I): "oxor",
+    re.compile(r"https?://(?:www\.)?osec\.io/", re.I): "ottersec",
+    re.compile(r"https?://github\.com/(?:ackee-blockchain|ackeeblockchain)/", re.I): "ackee",
+    re.compile(r"https?://github\.com/trailofbits/publications", re.I): "trail_of_bits",
+    re.compile(r"https?://(?:www\.)?certik\.com/projects/", re.I): "certik",
+    re.compile(r"https?://(?:www\.)?openzeppelin\.com/security-audits/", re.I): "openzeppelin",
+    re.compile(r"https?://code4rena\.com/(?:reports|audits|contests)/", re.I): "code4rena",
+    re.compile(r"https?://(?:www\.)?sherlock\.xyz/audits/", re.I): "sherlock",
+    re.compile(r"https?://(?:www\.)?cantina\.xyz/(?:competitions|portfolio)/", re.I): "cantina",
+    re.compile(r"https?://(?:www\.)?spearbit\.com/", re.I): "spearbit",
+    re.compile(r"https?://(?:www\.)?quantstamp\.com/audits/", re.I): "quantstamp",
+    re.compile(r"https?://github\.com/pashov-audit-group/", re.I): "pashov",
+    re.compile(r"https?://(?:www\.)?hacken\.io/audits/", re.I): "hacken",
+    re.compile(r"https?://(?:www\.)?veridise\.com/audits-archive/", re.I): "veridise",
+    re.compile(r"https?://github\.com/runtimeverification/", re.I): "runtime_verification",
 }
 
 
@@ -189,8 +251,21 @@ async def _fetch_and_extract(
         )
     assert client is not None
 
+    # ALWAYS follow redirects and send browser-ish headers on the request,
+    # regardless of whether we own the client. The scanner pipeline passes
+    # a shared client from `make_client()` which does NOT set
+    # follow_redirects=True (httpx defaults to False), and many protocol
+    # homepages 301-redirect (e.g. www.rho.trading → rho.trading). Without
+    # this, the scraper sees a redirect body containing no audit text and
+    # silently classifies an audited protocol as under-audited. Per-request
+    # kwargs override the client defaults; safe to apply unconditionally.
+    request_headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; tvl-scanner/0.5)",
+        "Accept": "text/html,application/xhtml+xml",
+    }
+
     try:
-        response = await client.get(url)
+        response = await client.get(url, follow_redirects=True, headers=request_headers)
         if response.status_code >= 400:
             return (
                 HomepageScrapeResult(
@@ -220,23 +295,34 @@ async def _fetch_and_extract(
             await client.aclose()
 
     # Many modern sites are SPAs and the body has minimal text. We still
-    # check meta tags and any inline content. Cap input at 200KB so a
-    # malicious oversized payload can't blow up the regex engine.
-    sample = html[:200_000]
+    # check meta tags and any inline content. Cap input at 400KB — the
+    # original 200KB cap missed rho.trading's audits section (firms appeared
+    # at byte ~118K in a 204KB page; close, but 400KB gives meaningful
+    # headroom for modern SPA bundles). All patterns are `\b<literal>\b`
+    # form so they run in linear time regardless of input size — the cap is
+    # purely a memory bound, not a ReDoS guard.
+    sample = html[:400_000]
 
     wrapper_hits: set[str] = set()
     for pattern, tag in WRAPPER_PHRASES.items():
         if pattern.search(sample):
             wrapper_hits.add(tag)
 
-    # Audit firms are only counted if the page also contains some audit
-    # context word — this prevents false positives where a firm name happens
-    # to appear out of context (e.g. on a partner page).
+    # Audit firms via two paths:
+    #   1. Plaintext firm name regex — gated by AUDIT_CONTEXT_PATTERN to
+    #      avoid false positives where a firm name appears on a partner page.
+    #   2. URL fingerprint regex — direct links to the audit artifact
+    #      (e.g. halborn.com/audits/<proto>, audits.oxor.io/reports/<id>).
+    #      Match is unambiguous on its own, no context gate needed —
+    #      a homepage linking to its own audit page is direct evidence.
     audit_hits: set[str] = set()
     if AUDIT_CONTEXT_PATTERN.search(sample):
         for pattern, tag in AUDIT_FIRM_PHRASES.items():
             if pattern.search(sample):
                 audit_hits.add(tag)
+    for url_pattern, tag in AUDIT_FIRM_URL_PATTERNS.items():
+        if url_pattern.search(sample):
+            audit_hits.add(tag)
 
     github_urls = _extract_github_urls(sample)
 
