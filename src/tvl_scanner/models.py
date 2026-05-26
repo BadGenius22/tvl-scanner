@@ -60,6 +60,7 @@ class AuditSourceKind(str, Enum):
     WRAPPER_PROGRAM = "wrapper_program"  # Batch J: protocol wraps a known audited program (SPL stake pool, Uniswap V2 pair, etc.)
     HOMEPAGE_SCRAPE = "homepage_scrape"  # Batch K: regex hit on the protocol's own homepage citing an audit firm
     FACTORY_ATTRIBUTION = "factory_attribution"  # Batch N: contract's factory() returns a known DEX factory (V3 pool etc.)
+    PARENT_PROTOCOL = "parent_protocol"  # Batch Q: sibling under the same DefiLlama parentProtocol group has audit signals — typical pattern for multi-product teams (Rho Labs: rho-x, rho-x-lp-vault, rho-vaults-v1, rho-protocol all share rho.trading audits)
 
 
 class AuditSource(BaseModel):

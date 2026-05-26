@@ -393,17 +393,20 @@ def compute_score(
     ):
         under_audited = False
 
-    # BATCH J/K/N override: a single wrapper-program, homepage-scrape, or
-    # factory-attribution source is definitive evidence of prior auditing —
-    # these are signals the other override paths miss. WRAPPER_PROGRAM
-    # (bytecode hash match) and FACTORY_ATTRIBUTION (factory() call or
-    # slug-prefix match) both attribute audits via the upstream protocol;
-    # HOMEPAGE_SCRAPE picks up self-hosted audit firm citations.
+    # BATCH J/K/N/Q override: a single wrapper-program, homepage-scrape,
+    # factory-attribution, OR parent-protocol source is definitive evidence
+    # of prior auditing — these are signals the other override paths miss.
+    # WRAPPER_PROGRAM (bytecode hash match) and FACTORY_ATTRIBUTION (factory()
+    # call or slug-prefix match) attribute audits via the upstream protocol;
+    # HOMEPAGE_SCRAPE picks up self-hosted audit firm citations;
+    # PARENT_PROTOCOL inherits a sibling's audit signal within the same
+    # DefiLlama parentProtocol group (multi-product team pattern).
     for src in all_sources:
         if src.source in (
             AuditSourceKind.WRAPPER_PROGRAM,
             AuditSourceKind.HOMEPAGE_SCRAPE,
             AuditSourceKind.FACTORY_ATTRIBUTION,
+            AuditSourceKind.PARENT_PROTOCOL,
         ):
             under_audited = False
             break

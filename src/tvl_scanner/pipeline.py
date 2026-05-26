@@ -74,7 +74,10 @@ async def run_pipeline(
         from tvl_scanner.enrich.prices import PriceCache
         catalog_price_cache = PriceCache()
         catalog_enriched = await discover_from_defillama_catalog(
-            scan_date=scan_date, client=client, price_cache=catalog_price_cache
+            chains=chains,
+            scan_date=scan_date,
+            client=client,
+            price_cache=catalog_price_cache,
         )
     log.info("discovered %d catalog-based candidates", len(catalog_enriched))
 

@@ -452,8 +452,127 @@ async def _process_protocol(
         return None
 
 
+def _propagate_sibling_audits(
+    enriched: list[EnrichedCandidate],
+    catalog_protocols: list[dict[str, Any]],
+) -> None:
+    """BATCH Q: propagate audit signals across siblings in a parentProtocol group.
+
+    Multi-product teams (Rho Labs, Pendle V1/V2/V3, etc.) publish audits once
+    on the brand domain, but DefiLlama lists each sub-product as a separate
+    protocol entry. The per-protocol homepage scrape misses the audit signal
+    on siblings that live at sub-product subdomains (e.g. x.rho.trading).
+
+    For each parentProtocol group with at least one audited sibling, append
+    a PARENT_PROTOCOL AuditSource to every member that lacks its own audit
+    signal. Mutates `enriched` in place.
+
+    A sibling counts as "audited" if it has ANY of:
+      - DefiLlama audit_count >= 1
+      - precomputed_audit_sources of kind HOMEPAGE_SCRAPE / WRAPPER_PROGRAM /
+        FACTORY_ATTRIBUTION (single-source override kinds in compute_score)
+    """
+    if not enriched or not catalog_protocols:
+        return
+
+    # Map enriched candidates → their raw catalog dict (for the parentProtocol
+    # field, which isn't carried on the EnrichedCandidate model). Keyed by slug.
+    by_slug_raw: dict[str, dict[str, Any]] = {
+        str(p["slug"]): p for p in catalog_protocols if p.get("slug")
+    }
+
+    # Group enriched candidates by parentProtocol value
+    groups: dict[str, list[EnrichedCandidate]] = {}
+    for c in enriched:
+        if not c.defillama_slug:
+            continue
+        raw = by_slug_raw.get(c.defillama_slug)
+        if not raw:
+            continue
+        parent_id = raw.get("parentProtocol")
+        if not parent_id:
+            continue
+        groups.setdefault(str(parent_id), []).append(c)
+
+    STRONG_SOURCE_KINDS = {
+        AuditSourceKind.HOMEPAGE_SCRAPE,
+        AuditSourceKind.WRAPPER_PROGRAM,
+        AuditSourceKind.FACTORY_ATTRIBUTION,
+    }
+
+    propagated_count = 0
+    for parent_id, members in groups.items():
+        if len(members) < 2:
+            continue
+
+        # Collect audited siblings and their evidence
+        audited_siblings: list[tuple[EnrichedCandidate, str]] = []
+        for m in members:
+            evidence_summary: str | None = None
+            if m.defillama_audit_count and m.defillama_audit_count >= 1:
+                evidence_summary = (
+                    f"DefiLlama reports {m.defillama_audit_count} audit(s)"
+                )
+            else:
+                strong_firms = [
+                    s.title or s.source
+                    for s in m.precomputed_audit_sources
+                    if AuditSourceKind(s.source) in STRONG_SOURCE_KINDS
+                ]
+                if strong_firms:
+                    evidence_summary = "; ".join(strong_firms[:3])
+            if evidence_summary:
+                audited_siblings.append((m, evidence_summary))
+
+        if not audited_siblings:
+            continue
+
+        # Find the strongest sibling — prefer HOMEPAGE_SCRAPE evidence (most
+        # specific) over DefiLlama count (least specific). The first audited
+        # sibling provides the credit string for the synthetic source.
+        donor, donor_evidence = audited_siblings[0]
+        for m, e in audited_siblings:
+            if any(
+                AuditSourceKind(s.source) == AuditSourceKind.HOMEPAGE_SCRAPE
+                for s in m.precomputed_audit_sources
+            ):
+                donor, donor_evidence = m, e
+                break
+
+        # Members that lack BOTH a DefiLlama audit count AND any precomputed
+        # source inherit a PARENT_PROTOCOL source. We do not overwrite — if
+        # a sibling already has its own evidence, propagation adds no value.
+        for m in members:
+            has_own_signal = (
+                (m.defillama_audit_count and m.defillama_audit_count >= 1)
+                or bool(m.precomputed_audit_sources)
+            )
+            if has_own_signal:
+                continue
+            m.precomputed_audit_sources.append(
+                AuditSource(
+                    source=AuditSourceKind.PARENT_PROTOCOL,
+                    title=(
+                        f"Sibling protocol '{donor.defillama_slug}' is audited "
+                        f"({donor_evidence}); parent group: {parent_id}"
+                    ),
+                    weight=4,
+                )
+            )
+            propagated_count += 1
+
+    if propagated_count:
+        log.info(
+            "sibling audit propagation: added PARENT_PROTOCOL source to %d "
+            "candidates across %d parent groups",
+            propagated_count,
+            len(groups),
+        )
+
+
 async def discover_from_defillama_catalog(
     *,
+    chains: list[Chain] | None = None,
     scan_date: date | None = None,
     client: httpx.AsyncClient | None = None,
     price_cache: PriceCache | None = None,
@@ -465,10 +584,20 @@ async def discover_from_defillama_catalog(
     with ~150 qualifying entries this drops the stage from ~5 minutes
     (serial) to ~15-20 seconds, which was by far the biggest contributor to
     the ~6-minute total scan time.
+
+    `chains` overrides the .env `CHAINS` setting (matches Stage 1 behavior).
+    When None, falls back to `Settings.chain_list`. Without this parameter,
+    a `--chains ethereum` CLI override was silently dropped here — leaving
+    catalog discovery on the default `solana,arbitrum,base` set and filtering
+    out Ethereum-only protocols (e.g. rho-x-lp-vault) regardless of what
+    the user asked for.
     """
     s = settings()
     scan_date = scan_date or date.today()
-    configured_chains = {Chain(c) for c in s.chain_list}
+    if chains is not None:
+        configured_chains = set(chains)
+    else:
+        configured_chains = {Chain(c) for c in s.chain_list}
 
     catalog = DefiLlamaCatalog()
     await catalog.load(client=client)
@@ -512,6 +641,18 @@ async def discover_from_defillama_catalog(
     )
 
     results = [r for r in task_results if r is not None]
+
+    # BATCH Q: sibling-protocol audit propagation. DefiLlama's `parentProtocol`
+    # field groups multi-product teams under a single parent (e.g. rho-x +
+    # rho-x-lp-vault + rho-vaults-v1 + rho-protocol all share `parent#rho`).
+    # Audits published by the team — typically on a single brand domain —
+    # apply to ALL siblings, but the per-protocol homepage scrape only fires
+    # on each sibling's own `url` field. When a sibling lives at a sub-product
+    # subdomain (e.g. x.rho.trading) that doesn't list audits, while another
+    # sibling (rho.trading) does, the first is wrongly classified as under-
+    # audited. Propagate sibling signals to fix this.
+    _propagate_sibling_audits(results, catalog._protocols)
+
     log.info(
         "defillama catalog discovery: %d protocols matched filters (from %d total)",
         len(results),
