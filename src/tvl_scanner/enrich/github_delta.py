@@ -203,29 +203,35 @@ async def fetch_delta(
     repo_url: str,
     base: str | None,
     *,
+    branch: str | None = None,
     client: httpx.AsyncClient | None = None,
 ) -> tuple[str, str, RepoComparison | None] | None:
-    """High-level: resolve repo HEAD and compare it against `base`.
+    """High-level: resolve a repo's watched-branch HEAD and compare it to `base`.
 
-    Returns `(default_branch, head_sha, comparison)`:
+    `branch` overrides the watched ref — needed for protocols that develop on a
+    release/version branch (e.g. marginfi's `0.1.9-main`) rather than the default
+    branch. When None, the repo's default branch is used.
+
+    Returns `(watched_branch, head_sha, comparison)`:
       - comparison is None when base is None (first run — caller records the
         head as the new baseline with no delta) or base == head (no change).
-      - Returns None entirely if the repo URL is unparseable or the repo is gone.
+      - Returns None entirely if the repo URL is unparseable, the repo is gone,
+        or the requested branch doesn't resolve.
     """
     parsed = parse_github_url(repo_url)
     if not parsed:
         return None
     owner, repo = parsed
 
-    branch = await get_default_branch(owner, repo, client=client)
-    if branch is None:
+    watched_branch = branch or await get_default_branch(owner, repo, client=client)
+    if watched_branch is None:
         return None
-    head_sha = await get_head_sha(owner, repo, branch, client=client)
+    head_sha = await get_head_sha(owner, repo, watched_branch, client=client)
     if head_sha is None:
         return None
 
     if base is None or base == head_sha:
-        return branch, head_sha, None
+        return watched_branch, head_sha, None
 
     comparison = await compare_commits(owner, repo, base, head_sha, client=client)
-    return branch, head_sha, comparison
+    return watched_branch, head_sha, comparison

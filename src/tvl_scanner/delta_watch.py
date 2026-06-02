@@ -50,6 +50,7 @@ class WatchTarget:
     github: str
     chains: list[Chain] = field(default_factory=list)
     languages: list[Language] = field(default_factory=list)
+    branch: str | None = None  # watch this ref instead of the default branch
     audited_at_commit: str | None = None
     audited_at_date: date | None = None
     bounty_program: str = "none"
@@ -95,6 +96,7 @@ def load_watchlist() -> list[WatchTarget]:
                 github=gh.strip(),
                 chains=_coerce_enum_list(item.get("chains"), Chain),
                 languages=_coerce_enum_list(item.get("languages"), Language),
+                branch=_opt_str(item.get("branch")),
                 audited_at_commit=_opt_str(item.get("audited_at_commit")),
                 audited_at_date=_opt_date(item.get("audited_at_date")),
                 bounty_program=item.get("bounty_program") or "none",
@@ -267,7 +269,7 @@ async def check_target(
         base = None
         baseline_source = "first_run"
 
-    fetched = await fetch_delta(target.github, base, client=client)
+    fetched = await fetch_delta(target.github, base, branch=target.branch, client=client)
     if fetched is None:
         log.warning("delta-watch: %s repo inaccessible (%s)", target.slug, target.github)
         return None

@@ -12,6 +12,10 @@
 #   github            (required) repo URL to watch
 #   chains            (optional) list of chains, e.g. [solana] or [ethereum, base]
 #   languages         (optional) [rust] | [solidity] | [move]
+#   branch            (optional) watch this ref instead of the repo's default branch.
+#                     Needed for protocols that develop on a release/version branch
+#                     (e.g. marginfi's `0.1.9-main`) while `main` stays frozen at an
+#                     old release — without this the watcher would see zero delta.
 #   audited_at_commit (optional) the commit the protocol was last reviewed at. When
 #                     set, every run diffs from THIS ref so the report always shows
 #                     the full unaudited surface. When absent, the watcher diffs
@@ -37,6 +41,11 @@
   github: https://github.com/0dotxyz/marginfi-v2
   chains: [solana]
   languages: [rust]
+  # marginfi develops on version branches; `main` is frozen at the audit
+  # baseline (843aa82d, 2026-04-06). Watch the active release line for the
+  # real post-audit fund-path delta.
+  branch: 0.1.9-main
+  audited_at_commit: 843aa82d
   audited_at_date: 2026-04-07
   bounty_program: immunefi
   bounty_max_payout_usd: 500000

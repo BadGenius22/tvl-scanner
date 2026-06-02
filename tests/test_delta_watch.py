@@ -171,7 +171,7 @@ async def test_check_target_uses_last_checked_when_no_audit_commit() -> None:
     state = {"p": {"last_checked_commit": "prevhead", "last_checked_date": "2026-05-01"}}
     captured: dict[str, str | None] = {}
 
-    async def fake_fetch(repo_url: str, base: str | None, *, client=None):  # type: ignore[no-untyped-def]
+    async def fake_fetch(repo_url: str, base: str | None, *, branch=None, client=None):  # type: ignore[no-untyped-def]
         captured["base"] = base
         return ("main", "newhead", None)
 
@@ -180,6 +180,31 @@ async def test_check_target_uses_last_checked_when_no_audit_commit() -> None:
     assert captured["base"] == "prevhead"  # diffed from last-checked
     assert result is not None
     assert result.baseline_source == "last_checked"
+
+
+async def test_check_target_passes_branch_override() -> None:
+    """A target with a `branch` override watches that ref, not the default branch."""
+    t = WatchTarget(
+        slug="marginfi",
+        display_name="marginfi",
+        github="https://github.com/0dotxyz/marginfi-v2",
+        branch="0.1.9-main",
+        audited_at_commit="843aa82d",
+    )
+    captured: dict[str, str | None] = {}
+
+    async def fake_fetch(repo_url: str, base: str | None, *, branch=None, client=None):  # type: ignore[no-untyped-def]
+        captured["branch"] = branch
+        captured["base"] = base
+        return ("0.1.9-main", "newhead", None)
+
+    state: dict[str, dict[str, str]] = {}
+    with patch("tvl_scanner.delta_watch.fetch_delta", side_effect=fake_fetch):
+        result = await check_target(t, state)
+    assert captured["branch"] == "0.1.9-main"
+    assert captured["base"] == "843aa82d"
+    assert result is not None
+    assert result.default_branch == "0.1.9-main"
 
 
 async def test_check_target_inaccessible_repo_returns_none() -> None:
