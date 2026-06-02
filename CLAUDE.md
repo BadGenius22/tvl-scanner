@@ -20,6 +20,12 @@ python -m tvl_scanner run --cutoff 5.0 --cap 50
 # Debug mode (httpx request logs)
 python -m tvl_scanner run --log-level DEBUG
 
+# Delta-watch: flag NEW commits to fund-exit paths in watched protocols since
+# their last audit (the highest-yield surface — fresh unaudited code on
+# permissionless paths). Watchlist: src/tvl_scanner/data/delta_watch_targets.yaml
+python -m tvl_scanner delta-watch
+python -m tvl_scanner delta-watch --targets omnipair,project-0
+
 # Verify pass-backed secrets are reachable
 tvl-scanner check-secrets
 
@@ -51,6 +57,10 @@ Stage 2: Enrich      → artifacts/enriched.json         (EnrichedCandidate)
 Stage 3: Audit-check → artifacts/audit_status.json     (AuditedCandidate)
 Stage 4: Rank+Report → reports/YYYY-MM-DD-scan.md + candidates/*.md (CandidateRecord)
 ```
+
+### Delta-watch mode (alternate entry, not part of the 4-stage scan)
+
+`delta_watch.py` (`tvl-scanner delta-watch`) is a separate entry point for a different question: *what fresh, unaudited code landed on fund-exit paths since a protocol's last audit?* It is independent of the discover→rank pipeline. For each entry in `data/delta_watch_targets.yaml` it GitHub-`compare`s a baseline commit (precedence: `audited_at_commit` → last-checked commit from `artifacts/delta_watch_state.json` → current HEAD on first run) against HEAD, classifies changed files against `Settings.FUND_PATH_KEYWORDS` (withdraw/borrow/liquidate/collateral/mint/flashloan/...), scores by fund-path-change magnitude, and writes `reports/YYYY-MM-DD-delta-watch.md` + per-target YAML records (same vault-liftable frontmatter as scan candidates). The GitHub `/compare` + `/commits` access lives in `enrich/github_delta.py` (reuses `enrich/github.py` auth + `http.get_json`). State persists so reruns are incremental. Rationale: the highest-yield audit surface is the delta of an actively-developed protocol, not a protocol audited cold.
 
 Top-level orchestration lives in `src/tvl_scanner/pipeline.py`. There are **two parallel discovery paths** that converge before Stage 2 enrichment, deduped by `defillama_slug`:
 

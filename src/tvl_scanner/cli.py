@@ -123,6 +123,37 @@ def run(
     console.print(f"\n[bold green]✓ Report written:[/] {summary}")
 
 
+@app.command("delta-watch")
+def delta_watch(
+    targets: str | None = typer.Option(
+        None,
+        "--targets",
+        help="Comma-separated target slugs to check (e.g. omnipair,project-0). "
+        "Defaults to the full data/delta_watch_targets.yaml watchlist.",
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="Python logging level."),
+) -> None:
+    """Flag new commits to fund-exit paths in watched protocols since their last audit.
+
+    The highest-yield audit surface is fresh, unaudited code on permissionless
+    paths in an actively-developed protocol. This compares each watched repo's
+    baseline (known audited commit, or last-checked commit) against current HEAD
+    and reports changes to withdraw/borrow/liquidate/collateral/mint/flashloan files.
+    """
+    _setup_logging(log_level)
+    from tvl_scanner.delta_watch import run_delta_watch
+
+    target_set: set[str] | None = (
+        {t.strip().lower() for t in targets.split(",") if t.strip()} if targets else None
+    )
+    console.print(
+        f"[bold cyan]tvl-scanner {__version__}[/]  delta-watch"
+        f"{f'  targets={len(target_set)}' if target_set else '  (full watchlist)'}"
+    )
+    summary = asyncio.run(run_delta_watch(targets=target_set))
+    console.print(f"\n[bold green]✓ Delta-watch report written:[/] {summary}")
+
+
 @app.command("check-secrets")
 def check_secrets() -> None:
     """Verify all pass-backed API keys are reachable. Does NOT print the secret values."""

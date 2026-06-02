@@ -129,6 +129,42 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
 
+    # Delta-watch: track watched protocols' git repos for new commits to
+    # fund-exit paths since their last audit. State (last-checked commit per
+    # target) persists under ARTIFACTS_DIR so reruns are incremental.
+    DELTA_WATCH_STATE_FILE: str = "delta_watch_state.json"
+    DELTA_WATCH_CONCURRENCY: int = 5
+    # A changed file is a "fund-exit path" if its path (case-insensitive)
+    # contains one of these substrings. Tuned from the omnipair delta where the
+    # security-relevant changes were exactly withdraw/remove_collateral/
+    # remove_liquidity/borrow/circuit-breaker files. These are the surfaces a
+    # new commit most plausibly turns into a permissionless-theft bug.
+    FUND_PATH_KEYWORDS: list[str] = Field(
+        default_factory=lambda: [
+            "withdraw",
+            "redeem",
+            "borrow",
+            "repay",
+            "liquidat",
+            "liquidity",
+            "collateral",
+            "flashloan",
+            "flash_loan",
+            "mint",
+            "burn",
+            "transfer",
+            "settle",
+            "swap",
+            "deposit",
+            "circuit",
+            "vault",
+            "claim",
+            "bridge",
+            "oracle",
+            "price",
+        ]
+    )
+
     # Edge-match keywords — protocols matching these get a priority boost
     EDGE_MATCH_KEYWORDS: list[str] = Field(
         default_factory=lambda: [

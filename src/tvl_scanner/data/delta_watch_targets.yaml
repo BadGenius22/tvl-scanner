@@ -1,0 +1,42 @@
+# Delta-watch target list.
+#
+# Each entry is a protocol whose git repo the scanner tracks for NEW commits to
+# fund-exit paths (withdraw/redeem/borrow/liquidate/collateral/mint/flashloan/...)
+# since its last audit. The single best attack surface is fresh, unaudited code
+# on permissionless paths in an actively-developed protocol — `tvl-scanner
+# delta-watch` surfaces exactly that.
+#
+# Fields:
+#   slug              (required) canonical protocol id; the per-target record filename
+#   display_name      (required) human name for the report
+#   github            (required) repo URL to watch
+#   chains            (optional) list of chains, e.g. [solana] or [ethereum, base]
+#   languages         (optional) [rust] | [solidity] | [move]
+#   audited_at_commit (optional) the commit the protocol was last reviewed at. When
+#                     set, every run diffs from THIS ref so the report always shows
+#                     the full unaudited surface. When absent, the watcher diffs
+#                     from the last commit it checked (incremental, persisted in
+#                     artifacts/delta_watch_state.json).
+#   audited_at_date   (optional) ISO date of that audit, for the report
+#   bounty_program    (optional) immunefi | cantina | hackerone | hackenproof | selfhosted | none
+#   bounty_max_payout_usd (optional) integer USD, drives payout context in the report
+#
+# Seeded from the protocols reviewed in the 2026-06 audit session. Extend freely.
+
+- slug: omnipair
+  display_name: Omnipair
+  github: https://github.com/omnipair/omnipair-rs
+  chains: [solana]
+  languages: [rust]
+  audited_at_commit: a927600
+  audited_at_date: 2026-04-07
+  bounty_program: none
+
+- slug: project-0
+  display_name: Project 0 (marginfi-v2)
+  github: https://github.com/0dotxyz/marginfi-v2
+  chains: [solana]
+  languages: [rust]
+  audited_at_date: 2026-04-07
+  bounty_program: immunefi
+  bounty_max_payout_usd: 500000

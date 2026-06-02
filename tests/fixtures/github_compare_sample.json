@@ -1,0 +1,61 @@
+{
+  "status": "ahead",
+  "ahead_by": 3,
+  "behind_by": 0,
+  "total_commits": 3,
+  "commits": [
+    {
+      "sha": "aaa1111111111111111111111111111111111111",
+      "commit": {
+        "message": "fix(omnipair): validate borrow token identity",
+        "author": { "date": "2026-05-26T10:00:00Z" }
+      }
+    },
+    {
+      "sha": "bbb2222222222222222222222222222222222222",
+      "commit": {
+        "message": "feat: liquidity-delta-circuit-breaker",
+        "author": { "date": "2026-05-28T10:00:00Z" }
+      }
+    },
+    {
+      "sha": "ccc3333333333333333333333333333333333333",
+      "commit": {
+        "message": "docs: update README",
+        "author": { "date": "2026-05-31T10:00:00Z" }
+      }
+    }
+  ],
+  "files": [
+    {
+      "filename": "programs/omnipair/src/instructions/lending/borrow.rs",
+      "status": "modified",
+      "additions": 219,
+      "deletions": 12
+    },
+    {
+      "filename": "programs/omnipair/src/instructions/liquidity/remove_liquidity.rs",
+      "status": "modified",
+      "additions": 379,
+      "deletions": 40
+    },
+    {
+      "filename": "programs/omnipair/src/utils/liquidity_delta_circuit_breaker.rs",
+      "status": "added",
+      "additions": 405,
+      "deletions": 0
+    },
+    {
+      "filename": "README.md",
+      "status": "modified",
+      "additions": 5,
+      "deletions": 2
+    },
+    {
+      "filename": "tests/test_remove_liquidity.rs",
+      "status": "modified",
+      "additions": 60,
+      "deletions": 0
+    }
+  ]
+}

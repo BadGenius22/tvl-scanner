@@ -178,6 +178,78 @@ class CandidateRecord(AuditedCandidate):
         return f"{self.chain.value}:{self.address}"
 
 
+class FundPathChange(BaseModel):
+    """One changed file on a fund-exit path between the baseline and HEAD commits.
+
+    Emitted by the delta-watch flow. A "fund-exit path" is a file whose name
+    matches one of the FUND_PATH_KEYWORDS (withdraw/redeem/borrow/liquidate/
+    collateral/mint/flashloan/...). These are the surfaces where a new commit
+    most plausibly introduces a permissionless-theft bug.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    path: str = Field(..., description="Repo-relative file path that changed")
+    status: str = Field(..., description="added / modified / removed / renamed")
+    additions: int = Field(default=0, ge=0)
+    deletions: int = Field(default=0, ge=0)
+    matched_keyword: str = Field(..., description="Which FUND_PATH_KEYWORD this path matched")
+
+
+class DeltaWatchResult(BaseModel):
+    """Delta-watch output: a watched protocol's changes since its baseline commit.
+
+    The baseline is, in precedence order: the known audited commit, the last
+    commit this watcher checked, or (first run) the current HEAD. A result with
+    `total_commits == 0` means nothing changed since the baseline.
+
+    Field names overlap CandidateRecord where they apply (target_name,
+    display_name, chains, github_repo, bounty_*, why_interesting) so a picked
+    delta lifts into the same Phase 2a vault handoff as a normal scan candidate.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    # Identity (vault-liftable)
+    target_name: str
+    display_name: str
+    protocol_type: str = "Delta-watch target"
+    languages: list[Language] = Field(default_factory=list)
+    chains: list[Chain] = Field(default_factory=list)
+    github_repo: str
+    bounty_program: str = "none"
+    bounty_max_payout_usd: int | None = None
+
+    # Baseline / HEAD
+    default_branch: str
+    baseline_commit: str = Field(..., description="The ref the diff started from")
+    baseline_source: Literal["audited_commit", "last_checked", "first_run"] = "first_run"
+    audited_at_date: date | None = None
+    head_commit: str
+
+    # Delta
+    total_commits: int = Field(default=0, ge=0, description="Commits baseline..HEAD")
+    total_files_changed: int = Field(default=0, ge=0)
+    fund_path_changes: list[FundPathChange] = Field(default_factory=list)
+    fund_path_files_changed: int = Field(default=0, ge=0)
+    fund_path_additions: int = Field(default=0, ge=0)
+    notable_commits: list[str] = Field(
+        default_factory=list, description="Commit subjects that touch fund-exit paths"
+    )
+    files_truncated: bool = Field(
+        default=False, description="True if GitHub capped the compare file list (>300 files)"
+    )
+
+    # Ranking + metadata
+    delta_score: float = Field(default=0.0, ge=0)
+    why_interesting: str = ""
+    checked_date: date
+
+    @property
+    def has_delta(self) -> bool:
+        return self.total_commits > 0 and self.fund_path_files_changed > 0
+
+
 class ScanReport(BaseModel):
     """Top-level container for a single scan run, written to artifacts/scan.json."""
 
