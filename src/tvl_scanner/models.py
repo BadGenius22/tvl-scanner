@@ -132,6 +132,17 @@ class EnrichedCandidate(BaseModel):
     proxy_impl_address: str | None = None
     compiler_version: str | None = None
 
+    # Real on-chain contract address resolved from the DefiLlama detail endpoint
+    # (the protocol's governance/token contract), chain-qualified as
+    # "{chain}:{0xaddr}". Catalog-sourced candidates otherwise have NO contract
+    # address (`address="defillama:{slug}"`) and fall back to an unreliable
+    # listedAt-based age (a 180-day placeholder when listedAt is null), which
+    # made the scanner blind to true protocol age. This field lets the catalog
+    # path resolve the TRUE deployment date (via enrich/etherscan.py) and use it
+    # as first_seen. None for pool-sourced candidates (their `address` is already
+    # the real contract) and for catalog protocols with no usable EVM address.
+    onchain_address: str | None = None
+
     # Pre-computed audit sources from Batch J/K detection (wrapper programs,
     # bytecode pattern matches, homepage regex hits). compute_score in stage 3
     # appends these to its all_sources list. Default empty.

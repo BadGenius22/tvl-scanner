@@ -217,3 +217,95 @@ async def test_catalog_discovery_sources_enrichment_metadata(
         assert r.source == DiscoverySource.DEFILLAMA_CATALOG
         assert r.address.startswith("defillama:")
         assert r.defillama_slug is not None
+
+
+def test_parse_detail_address_variants() -> None:
+    """True-age fix: parse DefiLlama detail `address` into (chain, evm_addr)."""
+    from tvl_scanner.enrich.defillama_protocols import _parse_detail_address
+
+    # bare 0x → implicitly Ethereum
+    assert _parse_detail_address("0x584bC13c7D411c00c01A62e8019472dE68768430") == (
+        Chain.ETHEREUM,
+        "0x584bC13c7D411c00c01A62e8019472dE68768430",
+    )
+    # chain-qualified
+    assert _parse_detail_address("bsc:0xe0e514c71282b6f4e823703a39374cf58dc3ea4f") == (
+        Chain.BSC,
+        "0xe0e514c71282b6f4e823703a39374cf58dc3ea4f",
+    )
+    # rejected: Solana base58, unknown chain prefix, wrong length, None
+    assert _parse_detail_address("So11111111111111111111111111111111111111112") == (None, None)
+    assert _parse_detail_address("avax:0xe0e514c71282b6f4e823703a39374cf58dc3ea4f") == (None, None)
+    assert _parse_detail_address("0xshort") == (None, None)
+    assert _parse_detail_address(None) == (None, None)
+
+
+async def test_resolve_true_deploy_dates_overrides_first_seen() -> None:
+    """The resolver flips first_seen to the real deploy date for candidates with
+    an on-chain address, and leaves address-less candidates at their placeholder."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch as _patch
+
+    from tvl_scanner.enrich.defillama_protocols import _resolve_true_deploy_dates
+    from tvl_scanner.models import EnrichedCandidate, Language
+
+    placeholder = date(2025, 12, 5)
+
+    def _mk(slug: str, onchain: str | None) -> EnrichedCandidate:
+        return EnrichedCandidate(
+            chain=Chain.ETHEREUM,
+            address=f"defillama:{slug}",
+            tvl_usd=1_000_000,
+            first_seen=placeholder,
+            source=DiscoverySource.DEFILLAMA_CATALOG,
+            target_name=slug,
+            display_name=slug,
+            protocol_type="Test",
+            languages=[Language.SOLIDITY],
+            onchain_address=onchain,
+        )
+
+    cands = [
+        _mk("hegic", "ethereum:0x584bc13c7d411c00c01a62e8019472de68768430"),
+        _mk("no-addr", None),
+    ]
+    fake = _AsyncMock(
+        return_value={"0x584bc13c7d411c00c01a62e8019472de68768430": date(2020, 8, 8)}
+    )
+    with _patch(
+        "tvl_scanner.enrich.defillama_protocols.fetch_creation_dates_batch", new=fake
+    ):
+        await _resolve_true_deploy_dates(cands, None)
+
+    assert cands[0].first_seen == date(2020, 8, 8)  # flipped to true deploy date
+    assert cands[1].first_seen == placeholder  # no address → unchanged
+    fake.assert_awaited_once()  # single ethereum batch
+
+
+async def test_resolve_true_deploy_dates_noop_without_addresses() -> None:
+    """No on-chain addresses → resolver makes no Etherscan call at all (hermetic)."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch as _patch
+
+    from tvl_scanner.enrich.defillama_protocols import _resolve_true_deploy_dates
+    from tvl_scanner.models import EnrichedCandidate, Language
+
+    cand = EnrichedCandidate(
+        chain=Chain.SOLANA,
+        address="defillama:jupiter",
+        tvl_usd=1_000_000,
+        first_seen=date(2025, 12, 5),
+        source=DiscoverySource.DEFILLAMA_CATALOG,
+        target_name="jupiter",
+        display_name="Jupiter",
+        protocol_type="Test",
+        languages=[Language.RUST],
+        onchain_address=None,
+    )
+    fake = _AsyncMock(return_value={})
+    with _patch(
+        "tvl_scanner.enrich.defillama_protocols.fetch_creation_dates_batch", new=fake
+    ):
+        await _resolve_true_deploy_dates([cand], None)
+
+    fake.assert_not_awaited()  # early-return before any chain batch

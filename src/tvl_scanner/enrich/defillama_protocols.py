@@ -32,6 +32,7 @@ import httpx
 from tvl_scanner.config import settings
 from tvl_scanner.enrich import bounty, github_registry
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
+from tvl_scanner.enrich.etherscan import fetch_creation_dates_batch
 from tvl_scanner.enrich.github import enrich_repo
 from tvl_scanner.enrich.homepage_scrape import (
     rank_github_urls_for_protocol,
@@ -170,6 +171,32 @@ def _audit_links(protocol: dict[str, Any]) -> list[str]:
     return [u for u in raw if isinstance(u, str) and u.startswith("http")]
 
 
+def _parse_detail_address(raw: Any) -> tuple[Chain | None, str | None]:
+    """Parse the DefiLlama detail `address` field into (chain, evm_address).
+
+    DefiLlama's `/protocol/{slug}` detail exposes the protocol's governance/token
+    contract as either a bare `0x...` (implicitly Ethereum) or a chain-qualified
+    `bsc:0x...` / `arbitrum:0x...` string. We use it to resolve the protocol's
+    TRUE deployment date (see `_resolve_true_deploy_dates`).
+
+    Returns (None, None) for: missing/blank values, unknown chain prefixes,
+    and non-EVM addresses (Solana base58 program/mint ids — Etherscan can't
+    resolve those).
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None, None
+    raw = raw.strip()
+    if ":" in raw:
+        prefix, _, addr = raw.partition(":")
+        chain = DL_CHAIN_NAMES.get(prefix.strip().lower())
+    else:
+        addr, chain = raw, Chain.ETHEREUM  # bare address → assume Ethereum
+    addr = addr.strip()
+    if chain is None or not addr.lower().startswith("0x") or len(addr) != 42:
+        return None, None
+    return chain, addr
+
+
 def _first_seen(protocol: dict[str, Any], scan_date: date) -> date:
     """Derive a 'first seen' date from DefiLlama's `listedAt` Unix timestamp."""
     raw = protocol.get("listedAt")
@@ -252,6 +279,16 @@ async def _process_protocol(
                 dl_audit_note = note_raw.strip()
         if dl_audit_count is None:
             dl_audit_count = _coerce_audit_count(protocol.get("audits"))
+
+        # Capture the protocol's on-chain contract address (governance/token)
+        # from the detail endpoint so the batch pass can resolve its TRUE
+        # deployment date. Catalog records otherwise have no real address and an
+        # unreliable listedAt-based age. Stored chain-qualified ("{chain}:0x..").
+        onchain_address: str | None = None
+        if detail:
+            addr_chain, addr_value = _parse_detail_address(detail.get("address"))
+            if addr_chain is not None and addr_value is not None:
+                onchain_address = f"{addr_chain.value}:{addr_value}"
 
         # github_url resolution: flat catalog → detail → curated registry →
         # org-name auto-guess (G2+G3) → None.
@@ -446,6 +483,7 @@ async def _process_protocol(
                 repo_metadata and repo_metadata.audits_folder_exists
             ),
             precomputed_audit_sources=precomputed_sources,
+            onchain_address=onchain_address,
         )
     except Exception as exc:
         log.warning("defillama protocol discovery: skipped entry: %s", exc)
@@ -570,6 +608,61 @@ def _propagate_sibling_audits(
         )
 
 
+async def _resolve_true_deploy_dates(
+    results: list[EnrichedCandidate],
+    client: httpx.AsyncClient | None,
+) -> None:
+    """Override `first_seen` with the TRUE on-chain deployment date for catalog
+    candidates that exposed a contract address via the detail endpoint.
+
+    Catalog records carry no real contract address (`address="defillama:{slug}"`)
+    and fall back to a listedAt-based age that is frequently a 180-day placeholder
+    (DefiLlama `listedAt` is null for most established protocols). This batch-
+    resolves each protocol's governance/token contract creation date via Etherscan
+    V2 (batched 5/call, throttled) and uses it as `first_seen`, so the freshness
+    score and reported age reflect TRUE protocol age — the difference between
+    surfacing a 5-year-old protocol as "180 days old" and as "5 years old".
+
+    Mutates candidates in place. No-op when no candidate carries an
+    `onchain_address` (tests, Solana-only runs) or when the etherscan key is
+    absent (the underlying fetch returns {} and nothing is overridden).
+    """
+    from collections import defaultdict
+
+    by_chain: dict[Chain, list[str]] = defaultdict(list)
+    addr_index: dict[tuple[Chain, str], list[EnrichedCandidate]] = defaultdict(list)
+    for cand in results:
+        oc = cand.onchain_address
+        if not oc or ":" not in oc:
+            continue
+        chain_str, _, addr = oc.partition(":")
+        try:
+            chain = Chain(chain_str)
+        except ValueError:
+            continue
+        by_chain[chain].append(addr)
+        addr_index[(chain, addr.lower())].append(cand)
+
+    if not by_chain:
+        return
+
+    total_with_addr = sum(len(v) for v in by_chain.values())
+    resolved = 0
+    for chain, addrs in by_chain.items():
+        dates = await fetch_creation_dates_batch(chain, addrs, client=client)
+        for addr_lower, deploy_date in dates.items():
+            for cand in addr_index.get((chain, addr_lower), []):
+                cand.first_seen = deploy_date
+                resolved += 1
+
+    log.info(
+        "defillama catalog: resolved TRUE deploy date for %d/%d candidates with "
+        "on-chain addresses (rest keep listedAt-based first_seen)",
+        resolved,
+        total_with_addr,
+    )
+
+
 async def discover_from_defillama_catalog(
     *,
     chains: list[Chain] | None = None,
@@ -652,6 +745,11 @@ async def discover_from_defillama_catalog(
     # sibling (rho.trading) does, the first is wrongly classified as under-
     # audited. Propagate sibling signals to fix this.
     _propagate_sibling_audits(results, catalog._protocols)
+
+    # Resolve TRUE deploy dates for catalog candidates so freshness/age reflect
+    # real protocol age, not DefiLlama's listedAt placeholder. Runs after all
+    # per-protocol enrichment so addresses can be batched by chain (5/call).
+    await _resolve_true_deploy_dates(results, client)
 
     log.info(
         "defillama catalog discovery: %d protocols matched filters (from %d total)",
