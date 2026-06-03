@@ -326,6 +326,11 @@ def _frontmatter_dict(candidate: CandidateRecord) -> dict[str, Any]:
         "github_repo": str(candidate.github_repo) if candidate.github_repo else None,
         "loc_estimate": candidate.loc_estimate,
         "docs_url": str(candidate.docs_url) if candidate.docs_url else None,
+        # Real on-chain contract resolved from the DefiLlama detail endpoint
+        # (chain-qualified). None for catalog candidates whose address couldn't
+        # be resolved (BSC free-tier, Solana, no detail address) and for pool
+        # candidates (whose `address` is already the real contract).
+        "onchain_address": candidate.onchain_address,
         "primary_contract": candidate.primary_contract,
         "priority_score": candidate.priority_score,
         "why_interesting": candidate.why_interesting,

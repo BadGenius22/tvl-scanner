@@ -34,10 +34,12 @@ def _record(
     audit_density: int = 0,
     under_audited: bool = True,
     edge_keywords: list[str] | None = None,
+    onchain_address: str | None = None,
 ) -> CandidateRecord:
     return CandidateRecord(
         chain=Chain.ARBITRUM,
         address="0xABCdef1234567890abcdef1234567890abcdef12",
+        onchain_address=onchain_address,
         tvl_usd=tvl_usd,
         first_seen=date(2026, 3, 15),
         unique_users_30d=1200,
@@ -127,6 +129,25 @@ def test_frontmatter_has_all_phase2a_sections() -> None:
     assert "bounty_program" in fm
     assert "bounty_url" in fm
     assert "bounty_max_payout_usd" in fm
+
+
+def test_frontmatter_primary_contract_prefers_onchain_address() -> None:
+    """Catalog candidates carry a synthetic `address`; the resolved on-chain
+    contract must win for primary_contract and be surfaced in the frontmatter,
+    so the vault handoff gets the real address."""
+    real = "ethereum:0xe76c6c83af64e4c60245d8c7de953df673a7a33d"
+    record = _record(onchain_address=real)
+    assert record.primary_contract == real
+    fm = _frontmatter_dict(record)
+    assert fm["onchain_address"] == real
+    assert fm["primary_contract"] == real
+
+
+def test_frontmatter_primary_contract_falls_back_without_onchain() -> None:
+    """With no resolved on-chain address, primary_contract uses chain:address."""
+    record = _record()  # onchain_address defaults to None
+    assert record.primary_contract == "arbitrum:0xABCdef1234567890abcdef1234567890abcdef12"
+    assert _frontmatter_dict(record)["onchain_address"] is None
 
 
 def test_frontmatter_languages_serialized_as_strings() -> None:

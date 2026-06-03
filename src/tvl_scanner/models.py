@@ -186,6 +186,12 @@ class CandidateRecord(AuditedCandidate):
 
     @property
     def primary_contract(self) -> str:
+        # Prefer the real on-chain contract resolved during enrichment. Catalog
+        # candidates' `address` is the synthetic "defillama:{slug}"; the resolved
+        # onchain_address is the chain-qualified governance/token contract
+        # ("{chain}:0x..") and is what an auditor actually needs for the handoff.
+        if self.onchain_address:
+            return self.onchain_address
         return f"{self.chain.value}:{self.address}"
 
 
