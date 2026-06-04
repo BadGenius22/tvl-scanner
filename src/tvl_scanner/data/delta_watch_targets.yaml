@@ -24,6 +24,11 @@
 #   audited_at_date   (optional) ISO date of that audit, for the report
 #   bounty_program    (optional) immunefi | cantina | hackerone | hackenproof | selfhosted | none
 #   bounty_max_payout_usd (optional) integer USD, drives payout context in the report
+#   extra_keywords    (optional) list of extra fund-path keywords for THIS target
+#                     only, merged with the global Settings.FUND_PATH_KEYWORDS.
+#                     For protocols whose fund logic is named with domain terms
+#                     the generic list misses (tranche/yield: strateg/accounting/
+#                     cdo/cooldown/redemption). Keeps the noise off other targets.
 #
 # Seeded from the protocols reviewed in the 2026-06 audit session. Extend freely.
 
@@ -49,3 +54,25 @@
   audited_at_date: 2026-04-07
   bounty_program: immunefi
   bounty_max_payout_usd: 500000
+
+- slug: strata-markets
+  display_name: Strata Markets
+  github: https://github.com/Strata-Markets/contracts
+  chains: [ethereum]
+  languages: [solidity]
+  # Risk-tranching yield protocol (senior/junior ERC-4626 over Ethena/Midas/
+  # Saturn/Figure). Core fund logic lives under contracts/tranches/ (StrataCDO,
+  # DYSAccounting, Tranche, per-strategy adapters). Develops on the `tranches`
+  # branch (the repo default). Baseline pinned to the last audited commit:
+  # tranches @ 1021020a (2026-01-22, immediately before Cyfrin's 2026-01-23
+  # shares-cooldown review). HEAD is ~95 commits / 112 fund-path files ahead —
+  # the entirely unaudited Apr-Jun 2026 strategy adapters (figure/ethena/midas/
+  # saturn) + DYS accounting changes are the target surface. No bug bounty/
+  # contest = uncontested delta.
+  branch: tranches
+  audited_at_commit: 1021020ab866
+  audited_at_date: 2026-01-23
+  bounty_program: none
+  # Strata's core fund logic (StrataCDO / DYSAccounting / Tranche / per-strategy
+  # adapters / cooldown) uses domain names the generic keyword list misses.
+  extra_keywords: [cdo, accounting, strateg, cooldown, redemption]

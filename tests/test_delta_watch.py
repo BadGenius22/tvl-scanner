@@ -51,6 +51,23 @@ def test_classify_fund_path_does_not_false_exclude_latest() -> None:
     assert classify_fund_path("src/latest_price.rs", kw) == "price"
 
 
+def test_classify_fund_path_with_extra_keywords() -> None:
+    """Per-target extra keywords catch domain-named fund logic the global list misses
+    (tranche/yield protocols name core files Accounting/Strategy/CDO, not withdraw/borrow)."""
+    kw = settings().FUND_PATH_KEYWORDS
+    # Global list misses Strata's core files (no generic fund keyword in the path)
+    assert classify_fund_path("contracts/tranches/DYSAccounting.sol", kw) is None
+    assert classify_fund_path("contracts/tranches/strategies/figure/FigureStrategy.sol", kw) is None
+    assert classify_fund_path("contracts/tranches/StrataCDO.sol", kw) is None
+    # Merged list (global + target extras) catches them
+    merged = kw + ["cdo", "accounting", "strateg", "cooldown", "redemption"]
+    assert classify_fund_path("contracts/tranches/DYSAccounting.sol", merged) == "accounting"
+    assert classify_fund_path("contracts/tranches/strategies/figure/FigureStrategy.sol", merged) == "strateg"
+    assert classify_fund_path("contracts/tranches/StrataCDO.sol", merged) == "cdo"
+    # extras still respect the test/mock exclusion
+    assert classify_fund_path("test/figure/MockStrategy.sol", merged) is None
+
+
 def test_score_delta_monotonic_in_file_count() -> None:
     assert score_delta(0, 0, "none") == 0.0
     assert score_delta(3, 0, "none") < score_delta(5, 0, "none")
@@ -73,6 +90,17 @@ def test_load_watchlist_parses_seed() -> None:
     assert omni.audited_at_commit == "a927600"
     assert Chain.SOLANA in omni.chains
     assert Language.RUST in omni.languages
+
+
+def test_load_watchlist_parses_extra_keywords() -> None:
+    wl = load_watchlist()
+    strata = next((t for t in wl if t.slug == "strata-markets"), None)
+    assert strata is not None
+    assert "accounting" in strata.extra_keywords
+    assert "strateg" in strata.extra_keywords
+    # targets without the field default to empty — no global keyword pollution
+    omni = next(t for t in wl if t.slug == "omnipair")
+    assert omni.extra_keywords == []
 
 
 def test_state_roundtrip(tmp_path: Path) -> None:
@@ -205,6 +233,41 @@ async def test_check_target_passes_branch_override() -> None:
     assert captured["base"] == "843aa82d"
     assert result is not None
     assert result.default_branch == "0.1.9-main"
+
+
+async def test_check_target_extra_keywords_are_per_target() -> None:
+    """extra_keywords flag a target's domain files; a target WITHOUT them does not
+    (proves per-target isolation — no global pollution)."""
+    files = [
+        ChangedFile("contracts/tranches/DYSAccounting.sol", "modified", 80, 5),  # extra 'accounting'
+        ChangedFile("contracts/tranches/oracles/AprProvider.sol", "added", 30, 0),  # global 'oracle'
+        ChangedFile("contracts/tranches/Errors.sol", "modified", 4, 1),  # no keyword at all
+    ]
+    comparison = RepoComparison(
+        base="b0", head="h1", total_commits=1,
+        commits=[CommitInfo("s1", "feat(accounting): true-up", "2026-05-01")],
+        files=files,
+    )
+
+    async def run(extra: list[str]) -> set[str]:
+        t = WatchTarget(
+            slug="strata-markets", display_name="Strata", github="https://github.com/x/y",
+            audited_at_commit="b0", extra_keywords=extra,
+        )
+        state: dict[str, dict[str, str]] = {}
+        with patch("tvl_scanner.delta_watch.fetch_delta", return_value=("tranches", "h1", comparison)):
+            res = await check_target(t, state)
+        assert res is not None
+        return {c.path for c in res.fund_path_changes}
+
+    with_extra = await run(["accounting", "strateg"])
+    assert "contracts/tranches/DYSAccounting.sol" in with_extra      # caught by extra
+    assert "contracts/tranches/oracles/AprProvider.sol" in with_extra  # caught by global 'oracle'
+    assert "contracts/tranches/Errors.sol" not in with_extra          # no keyword
+
+    without_extra = await run([])
+    assert "contracts/tranches/DYSAccounting.sol" not in without_extra  # global list alone misses it
+    assert "contracts/tranches/oracles/AprProvider.sol" in without_extra  # global still works
 
 
 async def test_check_target_inaccessible_repo_returns_none() -> None:

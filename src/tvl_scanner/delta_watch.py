@@ -55,6 +55,12 @@ class WatchTarget:
     audited_at_date: date | None = None
     bounty_program: str = "none"
     bounty_max_payout_usd: int | None = None
+    # Per-target extra fund-path keywords, merged with the global
+    # FUND_PATH_KEYWORDS for THIS target only. For protocols whose fund logic is
+    # named with domain terms the generic list misses (e.g. tranche/yield
+    # protocols: 'strateg', 'accounting', 'cdo', 'cooldown', 'redemption'). Keeps
+    # noise off other targets while giving each protocol accurate delta coverage.
+    extra_keywords: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +107,7 @@ def load_watchlist() -> list[WatchTarget]:
                 audited_at_date=_opt_date(item.get("audited_at_date")),
                 bounty_program=item.get("bounty_program") or "none",
                 bounty_max_payout_usd=_opt_int(item.get("bounty_max_payout_usd")),
+                extra_keywords=_coerce_str_list(item.get("extra_keywords")),
             )
         )
     log.info("delta-watch: loaded %d watch target(s)", len(out))
@@ -116,6 +123,22 @@ def _coerce_enum_list(raw: Any, enum_cls: Any) -> list[Any]:
             out.append(enum_cls(str(v).strip().lower()))
         except ValueError:
             log.debug("delta-watch: ignoring unknown %s value %r", enum_cls.__name__, v)
+    return out
+
+
+def _coerce_str_list(raw: Any) -> list[str]:
+    """Parse a YAML list of strings → lowercased, stripped, de-duped, non-empty."""
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for v in raw:
+        if not isinstance(v, (str, int)):
+            continue
+        kw = str(v).strip().lower()
+        if kw and kw not in seen:
+            seen.add(kw)
+            out.append(kw)
     return out
 
 
@@ -255,7 +278,11 @@ async def check_target(
     Returns None if the repo is inaccessible. A result with total_commits=0
     means nothing changed since the baseline. Mutates `state` with the new HEAD.
     """
-    keywords = settings().FUND_PATH_KEYWORDS
+    # Global fund-path keywords + this target's extra keywords (deduped). The
+    # per-target extras give protocols whose fund logic is named with domain
+    # terms (tranche/yield: strateg/accounting/cdo/...) accurate delta coverage
+    # without adding that noise to other targets' classification.
+    keywords = list(dict.fromkeys(settings().FUND_PATH_KEYWORDS + target.extra_keywords))
     prior = state.get(target.slug, {})
 
     # Baseline precedence: audited commit → last checked → first run (None).
