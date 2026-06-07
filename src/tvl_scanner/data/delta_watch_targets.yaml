@@ -46,12 +46,15 @@
   github: https://github.com/0dotxyz/marginfi-v2
   chains: [solana]
   languages: [rust]
-  # marginfi develops on version branches; `main` is frozen at the audit
-  # baseline (843aa82d, 2026-04-06). Watch the active release line for the
-  # real post-audit fund-path delta.
+  # marginfi develops on version branches; `main` is frozen. Watch the active
+  # release line for the real post-audit fund-path delta.
+  # Baseline re-pinned to OUR last review: 843aa82d delta audited 2026-05-28
+  # (NOTHING_SUBMITTABLE); the #578/#591/#594 delta through f62a46be audited
+  # 2026-06-06 (NOTHING_SUBMITTABLE — net-hardening audit-fixes). So future
+  # runs surface only commits AFTER f62a46be, not the already-cleared surface.
   branch: 0.1.9-main
-  audited_at_commit: 843aa82d
-  audited_at_date: 2026-04-07
+  audited_at_commit: f62a46be
+  audited_at_date: 2026-06-06
   bounty_program: immunefi
   bounty_max_payout_usd: 500000
 
