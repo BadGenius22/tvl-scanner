@@ -52,7 +52,7 @@ async def get_json(
     s = settings()
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=s.HTTP_TIMEOUT_SECONDS)
+        client = httpx.AsyncClient(timeout=s.HTTP_TIMEOUT_SECONDS, follow_redirects=True)
     assert client is not None  # for mypy
 
     try:
@@ -89,4 +89,9 @@ def make_client(headers: dict[str, str] | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=s.HTTP_TIMEOUT_SECONDS,
         headers=headers or {},
+        # Follow 301s: GitHub permanently redirects renamed repos/orgs (e.g. an
+        # Immunefi target that rebrands — marsfoundation → sparkdotfi) within
+        # api.github.com. Not following them surfaces the rename as a spurious
+        # "repo inaccessible" and silently drops the target from delta-watch.
+        follow_redirects=True,
     )

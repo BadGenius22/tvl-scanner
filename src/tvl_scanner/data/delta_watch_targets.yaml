@@ -79,3 +79,49 @@
   # Strata's core fund logic (StrataCDO / DYSAccounting / Tranche / per-strategy
   # adapters / cooldown) uses domain names the generic keyword list misses.
   extra_keywords: [cdo, accounting, strateg, cooldown, redemption]
+
+- slug: veda
+  display_name: Veda (boring-vault)
+  github: https://github.com/Veda-Labs/boring-vault
+  chains: [ethereum]
+  languages: [solidity]
+  # DeFi vault primitive — BoringVault + Teller (deposit/withdraw entry),
+  # Accountant (share pricing), Manager-with-merkle (strategy execution).
+  # Immunefi $1M, listed ~2026-01. The repo has NO audits/ folder and no release
+  # tags, so this baseline is a PROVISIONAL date proxy: main @ 44e17b06 (PR #629,
+  # 2026-03-28) = the trailing ~3 months of fund-path commits. RE-PIN to Veda's
+  # true last-audit commit once identified (Veda publishes Spearbit/Cantina
+  # reports off-repo). HEAD was 480c683d (2026-06-26) when added; main is
+  # actively developed (~116 PRs in the window) so expect a large delta.
+  branch: main
+  audited_at_commit: 44e17b06
+  audited_at_date: 2026-03-28
+  bounty_program: immunefi
+  bounty_max_payout_usd: 1000000
+  # Veda's fund-path components are named with domain terms the generic list
+  # misses: Teller, Accountant, Manager, BoringVault.
+  extra_keywords: [teller, accountant, manager, boring]
+
+- slug: spark-alm
+  display_name: Spark (ALM Controller)
+  github: https://github.com/sparkdotfi/spark-alm-controller
+  chains: [ethereum]
+  languages: [solidity]
+  # Spark's Asset-Liability-Mgmt controller — moves protocol funds across
+  # PSM/Aave/Morpho/exchanges via rate-limited actions (MainnetController,
+  # ForeignController, ALMProxy, RateLimitHelpers). Part of the Spark/sparklend
+  # Immunefi $5M program. Active branch is `dev` (default); `master` lags.
+  # Baseline pinned to the LAST AUDITED RELEASE v1.10.0 = 984ec546 (Cantina +
+  # Certora v1100 reports in audits/, tag dated 2026-02-16). NOTE: at add time
+  # dev was only +2 commits over v1.10.0 (deploy-only, 5 files) — the ALM delta
+  # is currently small/quiet, not a fresh-surface goldmine. Sibling in-scope
+  # repos (sparklend core, xchain-ssr-oracle, spark-gov-relay) can be added as
+  # separate entries if a broader Spark sweep is wanted.
+  branch: dev
+  audited_at_commit: 984ec546
+  audited_at_date: 2026-02-16
+  bounty_program: immunefi
+  bounty_max_payout_usd: 5000000
+  # ALM fund-movement files use domain names the generic list misses:
+  # MainnetController/ForeignController, ALMProxy, RateLimitHelpers, PSM.
+  extra_keywords: [controller, ratelimit, psm, alm]

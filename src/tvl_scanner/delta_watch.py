@@ -193,18 +193,44 @@ def save_state(state: dict[str, dict[str, str]], path: Path | None = None) -> No
 def classify_fund_path(filename: str, keywords: list[str]) -> str | None:
     """Return the first FUND_PATH_KEYWORD the path matches, or None.
 
-    Test/mock files and docs are excluded — they aren't live fund-exit surfaces.
-    The exclusion is path-segment aware so it never false-excludes a real file
-    whose name merely contains the substring "test" (e.g. "latest_price.rs",
-    where "latest_" contains "test_"). Bias is toward INCLUDING — a missed
-    fund-exit file is worse than an extra test-helper false positive.
+    Non-production artifacts are excluded even when their name contains a fund
+    keyword — they are not live fund-exit surfaces:
+      - test / mock files and dirs
+      - docs, audit reports, images (.md/.txt/.rst/.pdf/.svg/...)
+      - config & data (.json/.yaml/.toml/.lock/...) — e.g. deploy-address JSONs
+      - formal-verification specs (.spec/.conf) and the `certora/` dir
+      - deploy/build artifact dirs (deployments/, broadcast/)
+    Without this, a delta of Certora specs + deployment JSONs (which match
+    teller/accountant/vault by FILENAME, not by behaviour) inflates the score
+    with zero exploitable code — observed on the 2026-06-29 Veda run, where all
+    41 "fund-path" files were specs/JSONs/PDFs.
+
+    The exclusion is path-segment aware so it never false-excludes a real source
+    file whose name merely contains a substring like "test" (e.g.
+    "latest_price.rs", where "latest_" contains "test_"). Bias remains toward
+    INCLUDING real source — only non-code extensions and known artifact dirs are
+    dropped, never .sol/.rs/.move/.vy source.
     """
     lower = filename.lower()
-    if lower.endswith((".md", ".txt")):
+    # Non-code extensions: docs/reports, config/data, formal-verification specs,
+    # images. A fund keyword in one of these is a filename coincidence, not code.
+    if lower.endswith(
+        (
+            ".md", ".txt", ".rst", ".pdf",
+            ".json", ".yaml", ".yml", ".toml", ".lock", ".cfg", ".ini", ".env", ".csv",
+            ".spec", ".conf",
+            ".svg", ".png", ".jpg", ".jpeg", ".gif",
+        )
+    ):
         return None
     segments = lower.split("/")
-    test_dirs = {"test", "tests", "mock", "mocks", "__tests__", "__mocks__", "testing"}
-    if any(seg in test_dirs for seg in segments[:-1]):
+    # Non-production dirs: tests/mocks + formal-verification, deploy, audit, docs.
+    excluded_dirs = {
+        "test", "tests", "mock", "mocks", "__tests__", "__mocks__", "testing",
+        "certora", "audit", "audits", "deployments", "deployment", "broadcast",
+        "docs", "doc",
+    }
+    if any(seg in excluded_dirs for seg in segments[:-1]):
         return None
     base = segments[-1]
     name = base.rsplit(".", 1)[0]  # strip extension
@@ -214,6 +240,8 @@ def classify_fund_path(filename: str, keywords: list[str]) -> str | None:
         or name.endswith(("_test", "_tests", "_mock", "_mocks"))
         or name in {"test", "tests", "mock", "mocks"}
         or ".test." in base
+        or ".spec." in base  # JS/TS specs: foo.spec.ts
+        or base.endswith(".t.sol")  # Foundry test contracts
     ):
         return None
     for kw in keywords:
@@ -228,12 +256,18 @@ def _fund_path_changes(files_changed: list[ChangedFile], keywords: list[str]) ->
         kw = classify_fund_path(f.filename, keywords)
         if kw is None:
             continue
+        if f.is_comment_only:
+            # Pure comment/doc churn (NatSpec, a `// Last audited:` header sweep)
+            # — matches a fund keyword by FILENAME but changes no code. Dropping
+            # it stops doc-only diffs from inflating the fund-path count/score.
+            continue
+        # additions/deletions report CODE lines when known (comment lines excluded).
         out.append(
             FundPathChange(
                 path=f.filename,
                 status=f.status,
-                additions=f.additions,
-                deletions=f.deletions,
+                additions=f.code_additions if f.code_additions is not None else f.additions,
+                deletions=f.code_deletions if f.code_deletions is not None else f.deletions,
                 matched_keyword=kw,
             )
         )
@@ -241,25 +275,61 @@ def _fund_path_changes(files_changed: list[ChangedFile], keywords: list[str]) ->
 
 
 def score_delta(
-    fund_path_files: int, fund_path_additions: int, bounty_program: str
+    fund_path_files: int,
+    fund_path_additions: int,
+    bounty_program: str,
+    *,
+    truncated: bool = False,
+    notable_commits: int = 0,
+    total_commits: int = 0,
 ) -> float:
-    """Rank score: fund-path file count dominates, additions add a bounded
-    bonus, a live bounty adds a flat bonus (a Critical there has a payout).
+    """Rank score: CODE additions dominate; fund-path file count is a minor
+    breadth tiebreaker; a live bounty adds a flat bonus (a Critical there has a
+    payout). Weighting code volume over raw file count stops a broad +1-line
+    sweep from outranking a few substantive changes. `fund_path_additions`
+    counts CODE lines only — comment-only files are dropped in _fund_path_changes.
+
+    When the file list is truncated the fund-path count is unreliable, so we
+    rank on the commit-log signal instead (keyword-flagged commits + commit
+    volume) — otherwise a large, clearly-active delta would score ~0 and sink to
+    the bottom purely because GitHub wouldn't return its files.
     """
-    score = 3.0 * fund_path_files
-    score += min(5.0, fund_path_additions / 100.0)
+    score = 0.5 * fund_path_files
+    score += min(30.0, fund_path_additions / 3.0)
     if bounty_program and bounty_program != "none":
         score += 2.0
+    if truncated:
+        score += 2.0 * min(notable_commits, 5)  # up to +10 from flagged commits
+        score += min(5.0, total_commits / 20.0)  # bounded commit-volume bonus
     return round(score, 2)
 
 
-def _why(result_commits: int, fund_files: int, additions: int, source: str) -> str:
-    if fund_files == 0:
-        return f"{result_commits} new commit(s) since {source}, none on fund-exit paths"
-    return (
-        f"{fund_files} fund-exit file(s) changed (+{additions} lines) across "
-        f"{result_commits} unaudited commit(s) since {source}"
-    )
+def _why(
+    result_commits: int,
+    fund_files: int,
+    additions: int,
+    source: str,
+    *,
+    truncated: bool = False,
+    notable: int = 0,
+) -> str:
+    if fund_files > 0:
+        msg = (
+            f"{fund_files} fund-exit file(s) changed (+{additions} lines) across "
+            f"{result_commits} unaudited commit(s) since {source}"
+        )
+        if truncated:
+            msg += " — file list incomplete (GitHub 300-file cap); audit the commit log too"
+        return msg
+    if truncated:
+        # A 0 here is NOT "nothing on fund paths" — the scan couldn't enumerate
+        # the full diff. Point the reader at the commit log instead.
+        tail = f" ({notable} keyword-flagged)" if notable else ""
+        return (
+            f"{result_commits} new commit(s) since {source}; file list TRUNCATED "
+            f"(GitHub 300-file cap) — fund-path scan incomplete, audit via commit log{tail}"
+        )
+    return f"{result_commits} new commit(s) since {source}, none on fund-exit paths"
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +405,14 @@ async def check_target(
     fund_changes = _fund_path_changes(comparison.files, keywords)
     fund_additions = sum(c.additions for c in fund_changes)
     notable = _notable_commits(comparison, keywords)
-    score = score_delta(len(fund_changes), fund_additions, target.bounty_program)
+    score = score_delta(
+        len(fund_changes),
+        fund_additions,
+        target.bounty_program,
+        truncated=comparison.truncated,
+        notable_commits=len(notable),
+        total_commits=comparison.total_commits,
+    )
     source_label = (
         f"audit ({target.audited_at_date.isoformat()})"
         if baseline_source == "audited_commit" and target.audited_at_date
@@ -363,7 +440,14 @@ async def check_target(
         notable_commits=notable,
         files_truncated=comparison.truncated,
         delta_score=score,
-        why_interesting=_why(comparison.total_commits, len(fund_changes), fund_additions, source_label),
+        why_interesting=_why(
+            comparison.total_commits,
+            len(fund_changes),
+            fund_additions,
+            source_label,
+            truncated=comparison.truncated,
+            notable=len(notable),
+        ),
         checked_date=date.today(),
     )
 
@@ -425,8 +509,10 @@ async def run_delta_watch(
     results = [r for r in gathered if r is not None]
     save_state(state, state_path)
 
-    # Rank: targets with fund-path deltas first, by score; then the rest.
-    results.sort(key=lambda r: (r.fund_path_files_changed > 0, r.delta_score), reverse=True)
+    # Rank: targets with a delta first (fund-path files OR, when the file list
+    # was truncated, a commit-log signal — see DeltaWatchResult.has_delta), by
+    # score; then the rest.
+    results.sort(key=lambda r: (r.has_delta, r.delta_score), reverse=True)
 
     with_delta = [r for r in results if r.has_delta]
     log.info(
@@ -575,8 +661,8 @@ def _target_body(r: DeltaWatchResult) -> str:
             "",
             "## Fund-exit path changes (audit these)",
             "",
-            "| File | Status | +/- | Matched |",
-            "| ---- | ------ | --- | ------- |",
+            "| File | Status | code +/- | Matched |",
+            "| ---- | ------ | -------- | ------- |",
         ]
         for c in sorted(r.fund_path_changes, key=lambda x: x.additions, reverse=True):
             lines.append(

@@ -11,6 +11,7 @@ import pytest
 from tvl_scanner.config import settings
 from tvl_scanner.delta_watch import (
     WatchTarget,
+    _fund_path_changes,
     check_target,
     classify_fund_path,
     load_state,
@@ -68,13 +69,102 @@ def test_classify_fund_path_with_extra_keywords() -> None:
     assert classify_fund_path("test/figure/MockStrategy.sol", merged) is None
 
 
+def test_classify_fund_path_excludes_nonproduction_artifacts() -> None:
+    """Certora specs, deploy-address JSONs, and audit PDFs match fund keywords by
+    FILENAME but are not exploitable code — they must be dropped so they don't
+    inflate the delta. Regression from the 2026-06-29 Veda run, where all 41
+    'fund-path' files were specs/JSONs/PDFs."""
+    kw = settings().FUND_PATH_KEYWORDS + ["teller", "accountant", "manager", "boring"]
+    # Formal-verification specs / harnesses / confs (the `certora/` dir)
+    assert classify_fund_path("certora/specs/teller_basic.spec", kw) is None
+    assert classify_fund_path("certora/harness/TellerWithMultiAssetSupportHarness.sol", kw) is None
+    assert classify_fund_path("certora/confs/accountantWithYieldStreaming.conf", kw) is None
+    # Deployment address records (deploy dir and/or .json extension)
+    assert classify_fund_path("deployments/addresses/Mainnet/Tellers.json", kw) is None
+    assert classify_fund_path("WormholeBridgeWETHToMonad.json", kw) is None  # top-level .json
+    # Audit reports and build config
+    assert classify_fund_path("audit/certora-boring-vault-2.pdf", kw) is None
+    assert classify_fund_path("foundry.toml", kw) is None
+    # ...but real production source is still caught (no over-exclusion)
+    assert classify_fund_path("src/base/Roles/TellerWithMultiAssetSupport.sol", kw) == "teller"
+    assert classify_fund_path("src/base/Roles/AccountantWithRateProviders.sol", kw) == "accountant"
+
+
+def test_fund_path_changes_drops_comment_only_files() -> None:
+    """A fund-path file whose entire diff is comments (e.g. the Veda NatSpec /
+    `// Last audited:` sweep) must not count — only real code changes do."""
+    kw = settings().FUND_PATH_KEYWORDS
+    files = [
+        # real code change on a fund-path file → kept, additions = CODE lines
+        ChangedFile("src/BoringVault.sol", "modified", 30, 0, code_additions=12, code_deletions=0),
+        # comment-only change on a fund-path file (NatSpec/header) → dropped
+        ChangedFile("src/WithdrawQueue.sol", "modified", 26, 0, code_additions=0, code_deletions=0),
+        # unknown code count (patch unavailable) → kept (never drop a real change)
+        ChangedFile("src/MintHelper.sol", "modified", 5, 0),
+    ]
+    changes = _fund_path_changes(files, kw)
+    paths = {c.path for c in changes}
+    assert "src/BoringVault.sol" in paths  # real code kept
+    assert "src/WithdrawQueue.sol" not in paths  # comment-only dropped
+    assert "src/MintHelper.sol" in paths  # unknown kept
+    # reported additions are CODE lines (12), not the raw 30
+    assert next(c for c in changes if c.path == "src/BoringVault.sol").additions == 12
+
+
+def test_score_delta_truncated_uses_commit_signal() -> None:
+    """When the file list is truncated, the commit-log signal (flagged commits +
+    volume) ranks the delta — otherwise a clearly-active large delta scores ~0."""
+    quiet = score_delta(0, 0, "immunefi")  # bounty bonus only
+    trunc = score_delta(0, 0, "immunefi", truncated=True, notable_commits=6, total_commits=200)
+    assert quiet == 2.0
+    assert trunc > quiet
+    # Bonus is bounded: notable capped at 5 (×2 = +10), volume capped at +5.
+    assert trunc == round(2.0 + 10.0 + 5.0, 2)
+
+
+@pytest.mark.asyncio
+async def test_check_target_truncated_delta_flags_commit_log() -> None:
+    """Truncated file list + 0 matched fund files must NOT read as a clean
+    'none on fund-exit paths' — the commit-log signal keeps it a real delta."""
+    comparison = RepoComparison(
+        base="b",
+        head="h",
+        total_commits=120,
+        commits=[CommitInfo(sha="c1", message="add ability to cancel a withdrawal")],
+        # only artifact file matched → excluded by the sharpened classifier
+        files=[ChangedFile(filename="certora/specs/teller.spec", status="added", additions=5)],
+        truncated=True,
+    )
+    target = WatchTarget(
+        slug="veda",
+        display_name="Veda",
+        github="https://github.com/Veda-Labs/boring-vault",
+        bounty_program="immunefi",
+        bounty_max_payout_usd=1_000_000,
+        extra_keywords=["teller", "withdraw"],
+    )
+    state: dict = {}
+    with patch("tvl_scanner.delta_watch.fetch_delta", return_value=("main", "h", comparison)):
+        result = await check_target(target, state)
+    assert result is not None
+    assert result.fund_path_files_changed == 0  # certora spec excluded
+    assert result.files_truncated is True
+    assert result.notable_commits  # "cancel a withdrawal" flagged
+    assert result.has_delta is True  # commit-log fallback, not a false negative
+    assert "TRUNCATED" in result.why_interesting
+    assert result.delta_score > 2.0  # truncation bonus applied
+
+
 def test_score_delta_monotonic_in_file_count() -> None:
     assert score_delta(0, 0, "none") == 0.0
     assert score_delta(3, 0, "none") < score_delta(5, 0, "none")
     # bounty adds a flat bonus
     assert score_delta(3, 0, "immunefi") == pytest.approx(score_delta(3, 0, "none") + 2.0)
-    # additions add a bounded bonus (capped at 5)
-    assert score_delta(1, 100_000, "none") == pytest.approx(3.0 + 5.0)
+    # code additions DOMINATE (file count is only a 0.5 breadth weight) and are
+    # bounded (capped at 30): one file with huge additions outscores file count.
+    assert score_delta(1, 100_000, "none") == pytest.approx(0.5 + 30.0)
+    # additions outweigh breadth: 1 big-change file > 5 trivial files
+    assert score_delta(1, 300, "none") > score_delta(5, 0, "none")
 
 
 # ---------------------------------------------------------------------------

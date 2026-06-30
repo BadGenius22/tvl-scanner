@@ -264,7 +264,15 @@ class DeltaWatchResult(BaseModel):
 
     @property
     def has_delta(self) -> bool:
-        return self.total_commits > 0 and self.fund_path_files_changed > 0
+        if self.total_commits <= 0:
+            return False
+        if self.fund_path_files_changed > 0:
+            return True
+        # File list incomplete (GitHub's 300-file cap couldn't be fully
+        # resolved): a 0 fund-path count is NOT a clean negative. Fall back to
+        # the commit-log signal — keyword-flagged commit subjects indicate
+        # fund-path activity the truncated file scan couldn't confirm.
+        return self.files_truncated and bool(self.notable_commits)
 
 
 class ScanReport(BaseModel):

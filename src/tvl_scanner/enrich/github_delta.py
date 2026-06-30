@@ -28,8 +28,17 @@ from tvl_scanner.http import HttpError, get_json
 
 log = logging.getLogger(__name__)
 
-# GitHub caps the compare endpoint's file list at 300 entries.
+# GitHub caps the compare endpoint's `files` array at 300 and its `commits`
+# array at 250. The file cap is HARD: the `page` query param paginates COMMITS,
+# not files (verified empirically — page 2+ returns 0 files), and files come
+# back alphabetically, so a >300-file diff silently drops every path sorting
+# after the 300th (e.g. `src/` after `certora/`, `deployments/`, `script/`).
+# To recover the complete set we split the commit range into sub-ranges, each
+# small enough to stay under the cap, and union their files.
 _COMPARE_FILE_CAP = 300
+# Safety bound on how many compare calls one delta may trigger while
+# subdividing — stops a pathological diff from fanning out unboundedly.
+_MAX_COMPARE_CALLS = 60
 
 
 @dataclass
@@ -50,6 +59,21 @@ class ChangedFile:
     status: str
     additions: int = 0
     deletions: int = 0
+    # Added/removed lines that are real CODE (not blank, not a // or /* */ *
+    # comment), parsed from the diff patch. None = unknown (patch unavailable);
+    # callers treat unknown as code and never drop it.
+    code_additions: int | None = None
+    code_deletions: int | None = None
+
+    @property
+    def is_comment_only(self) -> bool:
+        """True only when the change touched ZERO code lines — pure comment/doc/
+        blank churn (e.g. a NatSpec block or a repo-wide `// Last audited:`
+        header sweep). Unknown counts (None, patch unavailable) are never
+        comment-only, so a real change is never dropped on missing data."""
+        if self.code_additions is None:
+            return False
+        return self.code_additions == 0 and (self.code_deletions or 0) == 0
 
 
 @dataclass
@@ -132,6 +156,36 @@ def _parse_commits(raw: Any) -> list[CommitInfo]:
     return out
 
 
+# Line prefixes that mark a C-style comment line. Solidity, Rust, and Move all
+# use these, so the same heuristic serves every delta-watch target language.
+_COMMENT_PREFIXES = ("//", "/*", "*/", "*")
+
+
+def _is_comment_or_blank(line: str) -> bool:
+    s = line.strip()
+    return not s or s.startswith(_COMMENT_PREFIXES)
+
+
+def _count_code_lines(patch: str | None) -> tuple[int | None, int | None]:
+    """From a unified-diff `patch`, count added/removed lines that are real code
+    (not blank, not a C-style comment). Returns (None, None) when no patch is
+    available — the caller treats unknown as code so a real change is never
+    dropped. Heuristic: a block-comment body line lacking a leading `*` would
+    count as code, which is the safe direction (never under-count code).
+    """
+    if not patch:
+        return None, None
+    code_add = code_del = 0
+    for line in patch.splitlines():
+        if line[:3] in ("+++", "---") or line.startswith("@@"):
+            continue
+        if line.startswith("+") and not _is_comment_or_blank(line[1:]):
+            code_add += 1
+        elif line.startswith("-") and not _is_comment_or_blank(line[1:]):
+            code_del += 1
+    return code_add, code_del
+
+
 def _parse_files(raw: Any) -> list[ChangedFile]:
     out: list[ChangedFile] = []
     if not isinstance(raw, list):
@@ -145,15 +199,126 @@ def _parse_files(raw: Any) -> list[ChangedFile]:
             continue
         additions = item.get("additions")
         deletions = item.get("deletions")
+        patch = item.get("patch")
+        code_add, code_del = _count_code_lines(patch if isinstance(patch, str) else None)
         out.append(
             ChangedFile(
                 filename=filename,
                 status=status,
                 additions=additions if isinstance(additions, int) else 0,
                 deletions=deletions if isinstance(deletions, int) else 0,
+                code_additions=code_add,
+                code_deletions=code_del,
             )
         )
     return out
+
+
+async def _fetch_compare(
+    owner: str, repo: str, base: str, head: str, *, client: httpx.AsyncClient | None
+) -> tuple[int, list[CommitInfo], list[ChangedFile]] | None:
+    """One `GET /compare/{base}...{head}` call → (total_commits, commits, files).
+
+    Returns None on failure (unknown ref, gone repo, rate limit). Commits come
+    back oldest→newest, base-exclusive / head-inclusive.
+    """
+    s = settings()
+    url = f"{s.GITHUB_API_BASE}/repos/{owner}/{repo}/compare/{base}...{head}"
+    try:
+        payload: Any = await get_json(url, headers=_auth_headers(), client=client)
+    except HttpError as exc:
+        log.info(
+            "github_delta: compare %s...%s failed for %s/%s (%s)", base, head, owner, repo, exc
+        )
+        return None
+    if not isinstance(payload, dict):
+        return None
+    total = payload.get("total_commits")
+    return (
+        total if isinstance(total, int) else 0,
+        _parse_commits(payload.get("commits")),
+        _parse_files(payload.get("files")),
+    )
+
+
+def _union_files(file_groups: list[list[ChangedFile]]) -> list[ChangedFile]:
+    """Merge changed-file lists from sub-range compares, deduped by filename.
+
+    A file touched in more than one sub-range is kept once with the largest
+    observed change size (additions+deletions) — the union over-reports a file's
+    churn at worst, never drops a touched file. Code-line counts carry the max
+    KNOWN value across occurrences, so a file showing real code in ANY sub-range
+    is never mislabeled comment-only by a sub-range where it was comment-only.
+    """
+    merged: dict[str, ChangedFile] = {}
+    code_add: dict[str, int] = {}
+    code_del: dict[str, int] = {}
+    for group in file_groups:
+        for f in group:
+            if f.code_additions is not None:
+                cur = code_add.get(f.filename)
+                code_add[f.filename] = (
+                    f.code_additions if cur is None else max(cur, f.code_additions)
+                )
+            if f.code_deletions is not None:
+                cur = code_del.get(f.filename)
+                code_del[f.filename] = (
+                    f.code_deletions if cur is None else max(cur, f.code_deletions)
+                )
+            prev = merged.get(f.filename)
+            if prev is None or (f.additions + f.deletions) > (prev.additions + prev.deletions):
+                merged[f.filename] = f
+    for name, f in merged.items():
+        if name in code_add:
+            f.code_additions = code_add[name]
+        if name in code_del:
+            f.code_deletions = code_del[name]
+    return list(merged.values())
+
+
+async def _collect_all_files(
+    owner: str,
+    repo: str,
+    base: str,
+    head: str,
+    commits: list[CommitInfo],
+    files: list[ChangedFile],
+    *,
+    client: httpx.AsyncClient | None,
+    budget: dict[str, int],
+) -> tuple[list[ChangedFile], bool]:
+    """Complete changed-file set for base...head, splitting whenever GitHub caps
+    the 300-file list.
+
+    `commits`/`files` are the already-fetched results for THIS range, so the
+    first compare is not repeated. Returns (files, still_truncated);
+    still_truncated is True only if a sub-range cannot be split further (a single
+    commit changing >300 files) or the call budget is exhausted.
+    """
+    if len(files) < _COMPARE_FILE_CAP:
+        return files, False
+    if len(commits) < 2:
+        return files, True  # one commit changing >300 files — accept the cap
+    if budget["calls"] >= _MAX_COMPARE_CALLS:
+        log.warning("github_delta: compare-split budget exhausted for %s/%s", owner, repo)
+        return files, True
+    # Pick a midpoint commit strictly between base and head (never head itself).
+    mid = commits[(len(commits) - 1) // 2].sha
+    groups: list[list[ChangedFile]] = []
+    truncated = False
+    for lo, hi in ((base, mid), (mid, head)):
+        budget["calls"] += 1
+        fetched = await _fetch_compare(owner, repo, lo, hi, client=client)
+        if fetched is None:
+            truncated = True  # sub-range failed (e.g. rate limit) — partial result
+            continue
+        _, sub_commits, sub_files = fetched
+        collected, sub_trunc = await _collect_all_files(
+            owner, repo, lo, hi, sub_commits, sub_files, client=client, budget=budget
+        )
+        groups.append(collected)
+        truncated = truncated or sub_trunc
+    return _union_files(groups), truncated
 
 
 async def compare_commits(
@@ -166,36 +331,33 @@ async def compare_commits(
 ) -> RepoComparison | None:
     """Compare two refs via `GET /compare/{base}...{head}`.
 
-    Returns a RepoComparison with the commits and changed files between base
-    and head, or None if the comparison can't be made (unknown ref, gone repo).
+    Returns a RepoComparison with the commits and changed files between base and
+    head, or None if the comparison can't be made (unknown ref, gone repo).
     `base == head` yields a valid result with total_commits=0 and no files.
-    """
-    s = settings()
-    url = f"{s.GITHUB_API_BASE}/repos/{owner}/{repo}/compare/{base}...{head}"
-    try:
-        payload: Any = await get_json(url, headers=_auth_headers(), client=client)
-    except HttpError as exc:
-        log.info(
-            "github_delta: compare %s...%s failed for %s/%s (%s)",
-            base,
-            head,
-            owner,
-            repo,
-            exc,
-        )
-        return None
-    if not isinstance(payload, dict):
-        return None
 
-    total = payload.get("total_commits")
-    files = _parse_files(payload.get("files"))
+    When GitHub caps the file list at 300, the commit range is split into
+    sub-ranges and their files unioned, so the result reflects the COMPLETE diff
+    — not just the alphabetically-first 300 paths. `truncated` then means the
+    split could not fully resolve (a single >300-file commit, or budget hit).
+    """
+    fetched = await _fetch_compare(owner, repo, base, head, client=client)
+    if fetched is None:
+        return None
+    total, commits, files = fetched
+
+    truncated = len(files) >= _COMPARE_FILE_CAP
+    if truncated:
+        budget = {"calls": 1}
+        files, truncated = await _collect_all_files(
+            owner, repo, base, head, commits, files, client=client, budget=budget
+        )
     return RepoComparison(
         base=base,
         head=head,
-        total_commits=total if isinstance(total, int) else 0,
-        commits=_parse_commits(payload.get("commits")),
+        total_commits=total,
+        commits=commits,
         files=files,
-        truncated=len(files) >= _COMPARE_FILE_CAP,
+        truncated=truncated,
     )
 
 
