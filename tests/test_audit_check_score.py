@@ -24,6 +24,7 @@ def _enriched(
     *,
     defillama_audit_links: list[str] | None = None,
     github_audits_folder_exists: bool = False,
+    github_audit_report_count: int = 0,
     github_repo: str | None = None,
 ) -> EnrichedCandidate:
     return EnrichedCandidate(
@@ -39,6 +40,7 @@ def _enriched(
         github_repo=github_repo,  # type: ignore[arg-type]
         defillama_audit_links=defillama_audit_links or [],  # type: ignore[arg-type]
         github_audits_folder_exists=github_audits_folder_exists,
+        github_audit_report_count=github_audit_report_count,
     )
 
 
@@ -71,8 +73,34 @@ def test_github_folder_source_emits_one_point() -> None:
     )
     sources = _github_folder_source(candidate)
     assert len(sources) == 1
-    assert sources[0].weight == 1
+    assert sources[0].weight == 1  # count=0 → floor of 1 (backward compat)
     assert str(sources[0].url).endswith("/tree/HEAD/audits")
+
+
+def test_github_folder_source_weights_by_report_count() -> None:
+    """A multiply-audited repo (e.g. Bailsec x3 + Certora + Zenith) scores the
+    full cap of 3, not a flat 1 — so it reads as saturated, not under-audited."""
+    candidate = _enriched(
+        github_audits_folder_exists=True,
+        github_audit_report_count=5,
+        github_repo="https://github.com/foo/bar",
+    )
+    sources = _github_folder_source(candidate)
+    assert len(sources) == 1
+    assert sources[0].weight == 3  # min(cap=3, 5)
+
+
+def test_multiply_audited_repo_not_under_audited() -> None:
+    """3+ in-repo audit reports alone push a candidate past the under-audited
+    threshold (<=2), even with no DefiLlama links or contests."""
+    candidate = _enriched(
+        github_audits_folder_exists=True,
+        github_audit_report_count=4,
+        github_repo="https://github.com/foo/bar",
+    )
+    result = compute_score(candidate, contest_sources=[])
+    assert result.audit_density_score >= 3
+    assert result.under_audited is False
 
 
 def test_compute_score_zero_for_empty_candidate() -> None:
@@ -134,6 +162,7 @@ def test_compute_score_defillama_count_override_forces_not_under_audited() -> No
     # Total score would normally be 0 → under_audited=True. But with audit_count=3
     # the override kicks in and flips it.
     import datetime
+
     from tvl_scanner.models import (
         Chain,
         DiscoverySource,
@@ -163,6 +192,7 @@ def test_compute_score_defillama_count_override_forces_not_under_audited() -> No
 def test_compute_score_defillama_count_zero_leaves_under_audited_true() -> None:
     """A candidate with defillama_audit_count=0 should NOT trigger the override."""
     import datetime
+
     from tvl_scanner.models import (
         Chain,
         DiscoverySource,
@@ -252,6 +282,7 @@ def test_compute_score_bounty_trust_pushes_above_threshold() -> None:
 def test_compute_score_defillama_count_one_does_not_override() -> None:
     """audit_count=1 is below the override threshold of 2 (single audit is weak signal)."""
     import datetime
+
     from tvl_scanner.models import (
         Chain,
         DiscoverySource,

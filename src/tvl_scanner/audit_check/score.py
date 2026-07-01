@@ -6,7 +6,7 @@ under_audited threshold is 2 — anything at or below is a candidate.
 
 Weights (per the plan):
     DefiLlama audit_links:       1 point each, cap 3
-    GitHub audits/ folder:       1 point (presence only — we don't count files)
+    GitHub audits/+docs/audits:  1 point per report artifact, cap 3
     Solodit prior findings:      2 points (v2 — deferred)
     C4/Sherlock/Cantina hit:     3 points per unique contest match
     Protocol docs mention:       1 point each (v2 — deferred)
@@ -194,7 +194,7 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
 # Cap per source kind to prevent one noisy source from dominating
 CAPS: dict[AuditSourceKind, int] = {
     AuditSourceKind.DEFILLAMA: 3,
-    AuditSourceKind.GITHUB_AUDITS_FOLDER: 1,
+    AuditSourceKind.GITHUB_AUDITS_FOLDER: 3,
 }
 
 # Any candidate at or below this score is flagged as under-audited
@@ -246,15 +246,26 @@ def _defillama_sources(candidate: EnrichedCandidate) -> list[AuditSource]:
 
 
 def _github_folder_source(candidate: EnrichedCandidate) -> list[AuditSource]:
-    """A single AuditSource if the github audits folder exists, else empty."""
+    """A single AuditSource weighted by the number of audit reports in the repo
+    (capped at CAPS[GITHUB_AUDITS_FOLDER]), else empty.
+
+    Counting reports (not just folder presence) means a multiply-audited repo
+    — e.g. Parallel's Bailsec x3 + Certora + Zenith PDFs — scores the full cap
+    and correctly reads as saturated, instead of the flat 1 point a
+    single-audit repo gets. Falls back to weight 1 when the folder exists but
+    the count is 0 (older enrichment / presence-only signal), preserving prior
+    behaviour.
+    """
     if not candidate.github_audits_folder_exists or not candidate.github_repo:
         return []
+    cap = CAPS[AuditSourceKind.GITHUB_AUDITS_FOLDER]
+    weight = min(cap, max(1, candidate.github_audit_report_count))
     audits_url = str(candidate.github_repo).rstrip("/") + "/tree/HEAD/audits"
     return [
         AuditSource(
             source=AuditSourceKind.GITHUB_AUDITS_FOLDER,
             url=audits_url,
-            weight=1,
+            weight=weight,
         )
     ]
 

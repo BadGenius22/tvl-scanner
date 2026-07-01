@@ -121,6 +121,7 @@ class EnrichedCandidate(BaseModel):
     defillama_audit_count: int | None = None
     defillama_audit_note: str | None = None
     github_audits_folder_exists: bool = False
+    github_audit_report_count: int = 0  # count of audit reports in the repo (saturation signal)
 
     # Etherscan V2 verification enrichment (EVM only; Solana records leave these blank).
     # Populated by Stage 2 via enrich/etherscan.py when the candidate has an EVM

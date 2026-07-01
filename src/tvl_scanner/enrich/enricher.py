@@ -417,6 +417,9 @@ async def enrich_one(
         github_audits_folder_exists=bool(
             repo_metadata and repo_metadata.audits_folder_exists
         ),
+        github_audit_report_count=(
+            repo_metadata.audit_report_count if repo_metadata else 0
+        ),
         is_verified=verification.is_verified,
         contract_name=verification.contract_name,
         is_proxy=verification.is_proxy,

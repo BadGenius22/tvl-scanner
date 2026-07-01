@@ -10,10 +10,30 @@ import pytest
 from pytest_httpx import HTTPXMock
 
 from tvl_scanner.enrich.github import (
+    _count_audit_reports,
     _estimate_loc,
     enrich_repo,
     parse_github_url,
 )
+
+
+def test_count_audit_reports_counts_reports_and_dirs_only() -> None:
+    """Report files (.pdf/.md named for a firm/audit) and version subdirs count;
+    non-audit files (README, source) do not."""
+    entries = [
+        {"name": "Bailsec - V3 Core - Final.pdf", "type": "file"},  # firm + pdf → 1
+        {"name": "Certora_Report_final.pdf", "type": "file"},        # report + pdf → 1
+        {"name": "v3.1", "type": "dir"},                             # version round → 1
+        {"name": "README.md", "type": "file"},                       # not an audit → 0
+        {"name": "logo.png", "type": "file"},                        # not a report → 0
+    ]
+    assert _count_audit_reports(entries) == 3
+
+
+def test_count_audit_reports_empty_and_non_list() -> None:
+    assert _count_audit_reports([]) == 0
+    assert _count_audit_reports(None) == 0
+    assert _count_audit_reports({"message": "Not Found"}) == 0
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -89,6 +109,11 @@ async def test_enrich_repo_full_happy_path(
         url="https://api.github.com/repos/CamelotLabs/camelot-v3/contents/audits",
         json=gh_audits_folder,
     )
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/CamelotLabs/camelot-v3/contents/docs/audits",
+        status_code=404,
+        json={"message": "Not Found"},
+    )
 
     with patch("tvl_scanner.enrich.github.get_secret", return_value="test-pat"):
         result = await enrich_repo("https://github.com/CamelotLabs/camelot-v3")
@@ -97,6 +122,8 @@ async def test_enrich_repo_full_happy_path(
     assert result.exists is True
     assert result.default_branch == "main"
     assert result.audits_folder_exists is True
+    # Both fixture entries are audit reports (trail-of-bits.pdf + sherlock.md).
+    assert result.audit_report_count == 2
     assert result.languages == {"Solidity": 90000, "TypeScript": 12000, "Shell": 500}
     # 90000/30 + 12000/30 = 3000 + 400 = 3400
     assert result.loc_estimate == 3400
@@ -118,6 +145,11 @@ async def test_enrich_repo_no_audits_folder_is_normal(
         status_code=404,
         json={"message": "Not Found"},
     )
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/CamelotLabs/camelot-v3/contents/docs/audits",
+        status_code=404,
+        json={"message": "Not Found"},
+    )
 
     with patch("tvl_scanner.enrich.github.get_secret", return_value="test-pat"):
         result = await enrich_repo("https://github.com/CamelotLabs/camelot-v3")
@@ -125,6 +157,7 @@ async def test_enrich_repo_no_audits_folder_is_normal(
     assert result is not None
     assert result.exists is True
     assert result.audits_folder_exists is False
+    assert result.audit_report_count == 0
 
 
 async def test_enrich_repo_404_on_main_call(httpx_mock: HTTPXMock) -> None:

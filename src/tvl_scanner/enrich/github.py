@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 
 from tvl_scanner.config import get_secret, settings
-from tvl_scanner.http import get_json, HttpError
+from tvl_scanner.http import HttpError, get_json
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ class RepoMetadata:
     default_branch: str | None = None
     loc_estimate: int | None = None
     audits_folder_exists: bool = False
+    audit_report_count: int = 0  # report artifacts in audits/ + docs/audits/ (saturation signal)
     languages: dict[str, int] | None = None
 
 
@@ -279,6 +280,37 @@ async def find_org_with_repos(
     return None
 
 
+# Filenames that denote an audit report (firm name or "audit"/"report").
+_AUDIT_REPORT_RE = re.compile(
+    r"audit|report|bailsec|cyfrin|certora|zenith|spearbit|trail.?of.?bits|sherlock|"
+    r"code4?rena|hexens|dedaub|quantstamp|ottersec|halborn|consensys|guardian|macro|"
+    r"zellic|pashov|chainsecurity|sigma.?prime|mixbytes",
+    re.IGNORECASE,
+)
+
+
+def _count_audit_reports(entries: Any) -> int:
+    """Count audit-report artifacts in a GitHub `/contents` listing: report files
+    (.pdf/.md whose name names a firm or says audit/report) plus subdirectories
+    (each is usually a version/round, e.g. v3, v3.1). No recursion — bounded.
+
+    Counting (vs binary presence) lets a multiply-audited repo (Bailsec x3 +
+    Certora + Zenith) read as saturated instead of scoring like a single audit.
+    """
+    if not isinstance(entries, list):
+        return 0
+    n = 0
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("name")
+        if not isinstance(name, str):
+            continue
+        if e.get("type") == "dir" or (name.lower().endswith((".pdf", ".md")) and _AUDIT_REPORT_RE.search(name)):
+            n += 1
+    return n
+
+
 async def enrich_repo(
     url: str | None, *, client: httpx.AsyncClient | None = None
 ) -> RepoMetadata | None:
@@ -322,18 +354,23 @@ async def enrich_repo(
     except Exception as exc:
         log.debug("github: languages fetch failed for %s/%s: %s", owner, repo, exc)
 
-    # Audits folder side-call — a 404 is a normal outcome, NOT an error.
-    audits_folder_exists = False
-    try:
-        audits_payload: Any = await get_json(
-            f"{base}/contents/audits", headers=headers, client=client
-        )
-        if isinstance(audits_payload, list) and audits_payload:
-            audits_folder_exists = True
-    except HttpError:
-        audits_folder_exists = False
-    except Exception as exc:
-        log.debug("github: audits folder check failed for %s/%s: %s", owner, repo, exc)
+    # Audit reports — count artifacts across the two common locations. A 404 is
+    # a normal outcome (no audits folder there), NOT an error.
+    audit_report_count = 0
+    for folder in ("audits", "docs/audits"):
+        try:
+            audits_payload: Any = await get_json(
+                f"{base}/contents/{folder}", headers=headers, client=client
+            )
+        except HttpError:
+            continue
+        except Exception as exc:
+            log.debug(
+                "github: audits folder %s check failed for %s/%s: %s", folder, owner, repo, exc
+            )
+            continue
+        audit_report_count += _count_audit_reports(audits_payload)
+    audits_folder_exists = audit_report_count > 0
 
     return RepoMetadata(
         owner=owner,
@@ -343,5 +380,6 @@ async def enrich_repo(
         default_branch=default_branch,
         loc_estimate=loc_estimate,
         audits_folder_exists=audits_folder_exists,
+        audit_report_count=audit_report_count,
         languages=languages,
     )
