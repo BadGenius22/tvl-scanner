@@ -17,6 +17,7 @@ the file list is capped so callers don't silently under-report.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -130,6 +131,64 @@ async def get_head_sha(
         return None
     sha = payload.get("sha")
     return sha if isinstance(sha, str) else None
+
+
+# Branch names that suggest an audit line: `audit/*`, or a known audit firm.
+_AUDIT_BRANCH_RE = re.compile(
+    r"audit|bailsec|cyfrin|certora|zenith|spearbit|trail.?of.?bits|sherlock|"
+    r"code4?rena|hexens|dedaub|quantstamp|ottersec|halborn|consensys|guardian|"
+    r"macro|zellic|pashov|chainsecurity|sigma.?prime|mixbytes|trailofbits",
+    re.IGNORECASE,
+)
+
+
+async def audit_branches_ahead(
+    owner: str,
+    repo: str,
+    base_ref: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    max_checks: int = 12,
+) -> list[str]:
+    """Names of audit-named branches (`audit/*`, or a known audit-firm name) that
+    carry commits NOT in `base_ref`.
+
+    A strong "known-issue minefield" signal: when the Immunefi-scoped branch is
+    frozen while fixes are staged on unmerged audit branches, the scoped
+    snapshot's strongest bugs are likely already whitehat/audit-firm reported
+    (duplicates → excluded). Learned on Parallel Protocol (2026-07): scoped
+    `main` was ~4.5mo stale behind six unmerged Bailsec/Cyfrin/whitehat branches.
+
+    One branch-list call plus up to `max_checks` compare calls. Returns [] on any
+    error — this is an advisory ranking signal and must never block the delta.
+    """
+    s = settings()
+    try:
+        payload: Any = await get_json(
+            f"{s.GITHUB_API_BASE}/repos/{owner}/{repo}/branches?per_page=100",
+            headers=_auth_headers(),
+            client=client,
+        )
+    except HttpError as exc:
+        log.info("github_delta: branches unavailable for %s/%s (%s)", owner, repo, exc)
+        return []
+    if not isinstance(payload, list):
+        return []
+    candidates = [
+        name
+        for b in payload
+        if isinstance(b, dict)
+        and isinstance((name := b.get("name")), str)
+        and name != base_ref
+        and _AUDIT_BRANCH_RE.search(name)
+    ]
+    ahead: list[str] = []
+    for name in candidates[:max_checks]:
+        cmp_ = await _fetch_compare(owner, repo, base_ref, name, client=client)
+        # cmp_[0] is total_commits the branch is ahead of base_ref (base-exclusive).
+        if cmp_ is not None and cmp_[0] > 0:
+            ahead.append(name)
+    return ahead
 
 
 def _parse_commits(raw: Any) -> list[CommitInfo]:

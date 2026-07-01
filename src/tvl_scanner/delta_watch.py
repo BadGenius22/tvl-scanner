@@ -31,7 +31,8 @@ from typing import Any
 import yaml
 
 from tvl_scanner.config import get_secret, settings
-from tvl_scanner.enrich.github_delta import ChangedFile, fetch_delta
+from tvl_scanner.enrich.github import parse_github_url
+from tvl_scanner.enrich.github_delta import ChangedFile, audit_branches_ahead, fetch_delta
 from tvl_scanner.http import make_client
 from tvl_scanner.models import (
     Chain,
@@ -274,6 +275,14 @@ def _fund_path_changes(files_changed: list[ChangedFile], keywords: list[str]) ->
     return out
 
 
+# Multiplier applied when the scoped branch is frozen behind unmerged audit
+# branches: the fresh-looking delta is a known-issue minefield (its strongest
+# bugs are likely already whitehat/audit-firm reported = duplicates), so damp
+# it hard — but not to zero, since the deployed contracts may still lag the
+# fixed branches (Primacy-of-Impact caveat).
+_FROZEN_BRANCH_DAMPING = 0.4
+
+
 def score_delta(
     fund_path_files: int,
     fund_path_additions: int,
@@ -282,6 +291,7 @@ def score_delta(
     truncated: bool = False,
     notable_commits: int = 0,
     total_commits: int = 0,
+    audit_branches_ahead: int = 0,
 ) -> float:
     """Rank score: CODE additions dominate; fund-path file count is a minor
     breadth tiebreaker; a live bounty adds a flat bonus (a Critical there has a
@@ -293,6 +303,10 @@ def score_delta(
     rank on the commit-log signal instead (keyword-flagged commits + commit
     volume) — otherwise a large, clearly-active delta would score ~0 and sink to
     the bottom purely because GitHub wouldn't return its files.
+
+    `audit_branches_ahead > 0` means the scoped branch is frozen behind unmerged
+    audit branches (a known-issue minefield); the score is damped by
+    `_FROZEN_BRANCH_DAMPING` so such targets sink in the ranking.
     """
     score = 0.5 * fund_path_files
     score += min(30.0, fund_path_additions / 3.0)
@@ -301,6 +315,8 @@ def score_delta(
     if truncated:
         score += 2.0 * min(notable_commits, 5)  # up to +10 from flagged commits
         score += min(5.0, total_commits / 20.0)  # bounded commit-volume bonus
+    if audit_branches_ahead > 0:
+        score *= _FROZEN_BRANCH_DAMPING
     return round(score, 2)
 
 
@@ -312,7 +328,14 @@ def _why(
     *,
     truncated: bool = False,
     notable: int = 0,
+    frozen_branches: int = 0,
 ) -> str:
+    frozen = (
+        f" — ⚠ scoped branch FROZEN behind {frozen_branches} unmerged audit branch(es); "
+        "likely known-issue minefield (bugs already whitehat/audit-firm reported), deprioritized"
+        if frozen_branches > 0
+        else ""
+    )
     if fund_files > 0:
         msg = (
             f"{fund_files} fund-exit file(s) changed (+{additions} lines) across "
@@ -320,7 +343,7 @@ def _why(
         )
         if truncated:
             msg += " — file list incomplete (GitHub 300-file cap); audit the commit log too"
-        return msg
+        return msg + frozen
     if truncated:
         # A 0 here is NOT "nothing on fund paths" — the scan couldn't enumerate
         # the full diff. Point the reader at the commit log instead.
@@ -405,6 +428,15 @@ async def check_target(
     fund_changes = _fund_path_changes(comparison.files, keywords)
     fund_additions = sum(c.additions for c in fund_changes)
     notable = _notable_commits(comparison, keywords)
+
+    # Frozen-branch check: is the scoped branch lagging unmerged audit branches?
+    # (Advisory ranking signal — never blocks the delta; [] on any error.)
+    frozen_branches: list[str] = []
+    parsed_repo = parse_github_url(target.github)
+    if parsed_repo is not None:
+        owner, repo = parsed_repo
+        frozen_branches = await audit_branches_ahead(owner, repo, branch, client=client)
+
     score = score_delta(
         len(fund_changes),
         fund_additions,
@@ -412,6 +444,7 @@ async def check_target(
         truncated=comparison.truncated,
         notable_commits=len(notable),
         total_commits=comparison.total_commits,
+        audit_branches_ahead=len(frozen_branches),
     )
     source_label = (
         f"audit ({target.audited_at_date.isoformat()})"
@@ -439,6 +472,7 @@ async def check_target(
         fund_path_additions=fund_additions,
         notable_commits=notable,
         files_truncated=comparison.truncated,
+        unmerged_audit_branches=frozen_branches,
         delta_score=score,
         why_interesting=_why(
             comparison.total_commits,
@@ -447,6 +481,7 @@ async def check_target(
             source_label,
             truncated=comparison.truncated,
             notable=len(notable),
+            frozen_branches=len(frozen_branches),
         ),
         checked_date=date.today(),
     )

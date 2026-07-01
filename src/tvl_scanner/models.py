@@ -256,6 +256,13 @@ class DeltaWatchResult(BaseModel):
     files_truncated: bool = Field(
         default=False, description="True if GitHub capped the compare file list (>300 files)"
     )
+    unmerged_audit_branches: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Audit-named branches (audit/*, firm names) with commits not in the scoped "
+            "branch — a frozen-branch/known-issue-minefield signal that damps the score."
+        ),
+    )
 
     # Ranking + metadata
     delta_score: float = Field(default=0.0, ge=0)

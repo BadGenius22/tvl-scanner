@@ -10,6 +10,7 @@ import pytest
 from pytest_httpx import HTTPXMock
 
 from tvl_scanner.enrich.github_delta import (
+    audit_branches_ahead,
     compare_commits,
     fetch_delta,
     get_default_branch,
@@ -233,3 +234,44 @@ async def test_fetch_delta_base_equals_head_no_diff(httpx_mock: HTTPXMock) -> No
 
 async def test_fetch_delta_unparseable_url() -> None:
     assert await fetch_delta("https://gitlab.com/foo/bar", "abc") is None
+
+
+async def test_audit_branches_ahead_flags_unmerged(httpx_mock: HTTPXMock) -> None:
+    """An audit-named branch with commits not in the scoped branch is flagged."""
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/branches?per_page=100",
+        json=[
+            {"name": "main", "commit": {"sha": "h9"}},
+            {"name": "audit/bailsec-june-2026", "commit": {"sha": "b1"}},
+            {"name": "feature/x", "commit": {"sha": "f1"}},  # non-audit → ignored
+        ],
+    )
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/compare/main...audit/bailsec-june-2026",
+        json={"total_commits": 3, "commits": [], "files": []},  # 3 ahead → unmerged
+    )
+    assert await audit_branches_ahead("o", "r", "main") == ["audit/bailsec-june-2026"]
+
+
+async def test_audit_branches_ahead_ignores_merged(httpx_mock: HTTPXMock) -> None:
+    """An audit branch that is 0 commits ahead (already merged) is not flagged."""
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/branches?per_page=100",
+        json=[
+            {"name": "main", "commit": {"sha": "h9"}},
+            {"name": "cyfrin-may-2026", "commit": {"sha": "m0"}},
+        ],
+    )
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/compare/main...cyfrin-may-2026",
+        json={"total_commits": 0, "commits": [], "files": []},  # ancestor → merged
+    )
+    assert await audit_branches_ahead("o", "r", "main") == []
+
+
+async def test_audit_branches_ahead_empty_on_error(httpx_mock: HTTPXMock) -> None:
+    """Branch-list failure yields [] — the signal never blocks the delta."""
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/branches?per_page=100", status_code=404
+    )
+    assert await audit_branches_ahead("o", "r", "main") == []

@@ -155,6 +155,17 @@ async def test_check_target_truncated_delta_flags_commit_log() -> None:
     assert result.delta_score > 2.0  # truncation bonus applied
 
 
+def test_score_delta_frozen_branch_damps() -> None:
+    """A scoped branch frozen behind unmerged audit branches damps the score
+    (known-issue minefield) but does not zero it (deployed code may still lag)."""
+    live = score_delta(10, 300, "immunefi")
+    frozen = score_delta(10, 300, "immunefi", audit_branches_ahead=2)
+    assert frozen == round(live * 0.4, 2)
+    assert 0 < frozen < live
+    # No unmerged audit branches → score unchanged.
+    assert score_delta(10, 300, "immunefi", audit_branches_ahead=0) == live
+
+
 def test_score_delta_monotonic_in_file_count() -> None:
     assert score_delta(0, 0, "none") == 0.0
     assert score_delta(3, 0, "none") < score_delta(5, 0, "none")
