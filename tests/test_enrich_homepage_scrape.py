@@ -243,10 +243,12 @@ def test_derive_candidate_urls_generates_slug_based_domains() -> None:
 
 
 def test_derive_candidate_urls_caps_total() -> None:
-    """No more than 25 URLs to bound HTTP cost (raised from 15 in Batch L
-    when _AUDIT_PATHS expanded to 18 entries)."""
+    """Ordered list is bounded at 50 entries (15 → 25 in Batch L when
+    _AUDIT_PATHS grew to 18; → 50 when G1 added docs./app. subdomain probes).
+    The real per-scan HTTP budget is enforced by max_attempts, not this cap —
+    this only keeps the ordered candidate list bounded."""
     urls = derive_candidate_urls("SoDEX Bridge", "https://ssi.sosovalue.com/share/abc")
-    assert len(urls) <= 25
+    assert len(urls) <= 50
 
 
 def test_derive_candidate_urls_includes_deep_nesting() -> None:

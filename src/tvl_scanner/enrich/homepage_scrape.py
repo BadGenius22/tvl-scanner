@@ -489,9 +489,10 @@ def derive_candidate_urls(
          company domain is also likely wrong.
       4. Slug × other TLDs × audit paths (least-likely fallback).
 
-    Returns a deduped, ordered list. Capped at ~25 entries to bound HTTP cost.
-    The actual per-scan request budget is enforced by scrape_homepage_with_fallback's
-    `max_attempts` parameter — this cap exists only to keep the ordered list bounded.
+    Returns a deduped, ordered list. Capped at 50 entries to keep the ordered
+    list bounded. The actual per-scan request budget is enforced by
+    scrape_homepage_with_fallback's `max_attempts` parameter — this cap does NOT
+    itself cause 50 HTTP calls.
     """
     candidates: list[str] = []
     seen: set[str] = set()
