@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 
@@ -83,7 +84,7 @@ def _build_coin_key(chain: Chain, token_address: str) -> str | None:
     return f"{slug}:{token_address.lower()}"
 
 
-def _parse_coin_entry(entry: dict) -> TokenPrice | None:
+def _parse_coin_entry(entry: dict[str, Any]) -> TokenPrice | None:
     """Parse one DefiLlama coin response into our TokenPrice dataclass."""
     try:
         price_raw = entry.get("price")

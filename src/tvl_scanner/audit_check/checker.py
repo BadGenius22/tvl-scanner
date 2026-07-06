@@ -23,7 +23,7 @@ from tvl_scanner.audit_check.contests import ContestHit, check_all_contests
 from tvl_scanner.audit_check.score import compute_score
 from tvl_scanner.config import settings
 from tvl_scanner.http import make_client
-from tvl_scanner.models import AuditedCandidate, AuditSourceKind, EnrichedCandidate
+from tvl_scanner.models import AuditedCandidate, AuditSource, AuditSourceKind, EnrichedCandidate
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ async def check_one(
         and candidate.defillama_audit_count > 0
     )
     if has_defillama_audits:
-        contest_sources: list = []
+        contest_sources: list[AuditSource] = []
     else:
         contest_sources = await check_all_contests(
             candidate.display_name,
@@ -79,7 +79,23 @@ async def check_all(
             async with sem:
                 return await check_one(c, client=client, token_cache=token_cache)
 
-        results = await asyncio.gather(*(_bounded(c) for c in candidates))
+        # return_exceptions=True so a single candidate's failure (e.g. an
+        # unhandled GitHub-search error) drops only that candidate rather than
+        # aborting Stage 3 and losing every candidate's audit status.
+        raw = await asyncio.gather(
+            *(_bounded(c) for c in candidates), return_exceptions=True
+        )
+
+    results: list[AuditedCandidate] = []
+    for candidate, result in zip(candidates, raw, strict=True):
+        if isinstance(result, BaseException):
+            log.error(
+                "audit-check failed for %s, dropping candidate: %s",
+                candidate.display_name,
+                result,
+            )
+            continue
+        results.append(result)
 
     log.info(
         "audit-check: token_cache held %d unique (token,org) pairs — "
@@ -90,7 +106,7 @@ async def check_all(
 
     n_under = sum(1 for r in results if r.under_audited)
     log.info("audit-check: %d/%d candidates under-audited", n_under, len(results))
-    return list(results)
+    return results
 
 
 def write_audit_status(

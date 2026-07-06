@@ -229,7 +229,7 @@ async def enrich_one(
             precomputed_sources.append(
                 AuditSource(
                     source=AuditSourceKind.WRAPPER_PROGRAM,
-                    url=bytecode_match.entry.audit_url,  # type: ignore[arg-type]
+                    url=bytecode_match.entry.audit_url,
                     title=(
                         f"Bytecode matches {bytecode_match.entry.name} "
                         f"(upstream: {bytecode_match.entry.upstream_protocol}, "
@@ -302,7 +302,7 @@ async def enrich_one(
             precomputed_sources.append(
                 AuditSource(
                     source=AuditSourceKind.FACTORY_ATTRIBUTION,
-                    url=factory_match.entry.audit_url,  # type: ignore[arg-type]
+                    url=factory_match.entry.audit_url,
                     title=(
                         f"factory() returns {factory_match.entry.name} factory "
                         f"({factory_match.factory_address}) — pool of audited "
@@ -328,7 +328,7 @@ async def enrich_one(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"{firm} audit cited on protocol homepage",
                         weight=4,
                     )
@@ -337,7 +337,7 @@ async def enrich_one(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"Wrapper of {wrapper_tag} (cited on homepage)",
                         weight=4,
                     )
@@ -407,8 +407,8 @@ async def enrich_one(
         github_repo=repo_metadata.url if repo_metadata and repo_metadata.exists else None,
         loc_estimate=repo_metadata.loc_estimate if repo_metadata else None,
         docs_url=None,  # v1: docs discovery deferred to a later batch
-        bounty_program=bounty_program,  # type: ignore[arg-type]
-        bounty_url=bounty_url_raw,  # type: ignore[arg-type]
+        bounty_program=bounty_program,
+        bounty_url=bounty_url_raw,
         bounty_max_payout_usd=bounty_payout,
         defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
         defillama_audit_links=_audit_links(dl_match),
@@ -444,9 +444,33 @@ async def enrich_all(
             async with sem:
                 return await enrich_one(c, catalog, client=client)
 
-        results = await asyncio.gather(*(_bounded(c) for c in contracts))
-    log.info("enrich: %d candidates enriched", len(results))
-    return list(results)
+        # return_exceptions=True so ONE candidate's failure (an unexpected upstream
+        # response shape, a transport error that escaped the inner guards) drops
+        # only that candidate instead of aborting the whole stage — matching the
+        # per-source fault isolation in Stage 1's discover_all.
+        raw = await asyncio.gather(
+            *(_bounded(c) for c in contracts), return_exceptions=True
+        )
+
+    results: list[EnrichedCandidate] = []
+    for contract, result in zip(contracts, raw, strict=True):
+        if isinstance(result, BaseException):
+            log.error(
+                "enrich failed for %s (%s:%s), dropping candidate: %s",
+                contract.protocol_guess or "?",
+                contract.chain.value,
+                contract.address[:12],
+                result,
+            )
+            continue
+        results.append(result)
+    log.info(
+        "enrich: %d/%d candidates enriched (%d dropped on error)",
+        len(results),
+        len(contracts),
+        len(contracts) - len(results),
+    )
+    return results
 
 
 def write_enriched(

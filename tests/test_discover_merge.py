@@ -6,8 +6,6 @@ import json
 from datetime import date, timedelta
 from pathlib import Path
 
-import pytest
-
 from tvl_scanner.discover.merge import (
     _apply_filters,
     _dedup,

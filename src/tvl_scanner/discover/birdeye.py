@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 import httpx
 
@@ -43,7 +44,7 @@ CHAIN_TO_BIRDEYE: dict[Chain, str] = {
 }
 
 
-def _parse_token(item: dict, chain: Chain) -> DiscoveredContract | None:
+def _parse_token(item: dict[str, Any], chain: Chain) -> DiscoveredContract | None:
     """Parse one new_listing token record. Returns None if below threshold or malformed.
 
     Field names are defensive — Birdeye has historically changed field names
@@ -148,7 +149,7 @@ async def fetch_top_pairs(
         return []
 
     # Response shape varies by Birdeye API version. Be defensive.
-    raw_items: list[dict] = []
+    raw_items: list[dict[str, Any]] = []
     if isinstance(payload, dict):
         data = payload.get("data")
         if isinstance(data, dict):

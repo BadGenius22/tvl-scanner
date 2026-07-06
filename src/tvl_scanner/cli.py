@@ -72,7 +72,7 @@ def run(
 
     # Allow CLI override of thresholds. These mutate the cached Settings instance.
     if min_tvl is not None:
-        s.MIN_TVL_USD = min_tvl  # type: ignore[misc]
+        s.MIN_TVL_USD = min_tvl
         console.print(f"[yellow]Override: MIN_TVL_USD = ${min_tvl:,}[/]")
 
     if chains is not None:

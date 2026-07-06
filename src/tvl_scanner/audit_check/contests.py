@@ -171,7 +171,7 @@ async def check_all_contests(
 
     if tasks:
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
-        for key, result in zip(task_keys, task_results):
+        for key, result in zip(task_keys, task_results, strict=True):
             if isinstance(result, BaseException):
                 hits: list[ContestHit] = []
             else:

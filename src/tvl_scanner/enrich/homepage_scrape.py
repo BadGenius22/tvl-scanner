@@ -374,7 +374,7 @@ def rank_github_urls_for_protocol(
         repo = match.group(2).lower().rstrip(".git")
         s = 0
         for tok in tokens:
-            if tok == owner or tok == repo:
+            if tok in (owner, repo):
                 s += 4
             elif tok in owner or tok in repo:
                 s += 2

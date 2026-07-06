@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from tvl_scanner.enrich.evm_bytecode_check import (
     BytecodePatternEntry,
     check_bytecode_match,
@@ -74,14 +72,13 @@ async def test_check_bytecode_match_with_seeded_registry() -> None:
     with patch(
         "tvl_scanner.enrich.evm_bytecode_check.load_bytecode_registry",
         return_value={expected_hash: fake_entry},
+    ), patch(
+        "tvl_scanner.enrich.evm_bytecode_check.fetch_contract_code",
+        new=AsyncMock(return_value=fake_bytecode),
     ):
-        with patch(
-            "tvl_scanner.enrich.evm_bytecode_check.fetch_contract_code",
-            new=AsyncMock(return_value=fake_bytecode),
-        ):
-            result = await check_bytecode_match(
-                Chain.ARBITRUM, "0xABCdef1234567890abcdef1234567890abcdef12"
-            )
+        result = await check_bytecode_match(
+            Chain.ARBITRUM, "0xABCdef1234567890abcdef1234567890abcdef12"
+        )
     assert result is not None
     assert result.entry.upstream_protocol == "test-dex"
     assert result.entry.audit_count == 5

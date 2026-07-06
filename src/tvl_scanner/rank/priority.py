@@ -22,7 +22,6 @@ from datetime import date
 from tvl_scanner.config import settings
 from tvl_scanner.models import AuditedCandidate, CandidateRecord
 
-
 # Weight distribution — sums to 1.0
 W_TVL = 0.25
 W_FRESH = 0.20

@@ -17,7 +17,7 @@ from datetime import date
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Chain(str, Enum):
@@ -69,7 +69,13 @@ class AuditSource(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     source: AuditSourceKind
-    url: HttpUrl | None = None
+    # Stored as a plain string, not pydantic HttpUrl: these URLs come from
+    # scraped homepages / API responses and are only ever displayed in the
+    # report. HttpUrl added no value (nothing parses the components) and two
+    # liabilities — it normalizes the URL (trailing-slash rewrites leaking into
+    # the report) and raises ValidationError on a malformed scrape, which would
+    # abort the whole enrichment stage. A plain string is faithful and safe.
+    url: str | None = None
     published_at: date | None = None
     title: str | None = None
     weight: int = Field(default=1, ge=0, description="Points contributed to audit_density_score")
@@ -105,14 +111,15 @@ class EnrichedCandidate(BaseModel):
     display_name: str
     protocol_type: str = Field(..., description="One-sentence classification")
     languages: list[Language]
-    github_repo: HttpUrl | None = None
+    # URL fields are plain strings by design — see the AuditSource.url note above.
+    github_repo: str | None = None
     loc_estimate: int | None = None
-    docs_url: HttpUrl | None = None
+    docs_url: str | None = None
     bounty_program: Literal["immunefi", "hackerone", "hackenproof", "cantina", "selfhosted", "none"] = "none"
-    bounty_url: HttpUrl | None = None
+    bounty_url: str | None = None
     bounty_max_payout_usd: int | None = None
     defillama_slug: str | None = None
-    defillama_audit_links: list[HttpUrl] = Field(default_factory=list)
+    defillama_audit_links: list[str] = Field(default_factory=list)
     # From DefiLlama /protocol/{slug} detail endpoint — deeper signal than the
     # flat /protocols catalog. audit_count is the integer count reported by
     # DefiLlama (may differ from len(audit_links) if some audits are linked in

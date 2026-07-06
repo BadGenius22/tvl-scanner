@@ -40,11 +40,18 @@ from tvl_scanner.enrich.homepage_scrape import (
 )
 from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.enrich.solana_wrapper_check import (
-    WrapperMatch,
-    check_wrapper_program,
     compute_on_chain_lst_tvl,
 )
-from tvl_scanner.models import AuditSource, AuditSourceKind
+from tvl_scanner.models import (
+    AuditSource,
+    AuditSourceKind,
+    Chain,
+    DiscoverySource,
+    EnrichedCandidate,
+    Language,
+)
+
+log = logging.getLogger(__name__)
 
 
 def _coerce_audit_count(raw: Any) -> int | None:
@@ -55,14 +62,6 @@ def _coerce_audit_count(raw: Any) -> int | None:
         return int(raw)
     except (ValueError, TypeError):
         return None
-from tvl_scanner.models import (
-    Chain,
-    DiscoverySource,
-    EnrichedCandidate,
-    Language,
-)
-
-log = logging.getLogger(__name__)
 
 
 # DefiLlama categories worth scanning. Lending/Yield/Derivatives/CDP/Bridge/LSD
@@ -352,7 +351,7 @@ async def _process_protocol(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.WRAPPER_PROGRAM,
-                        url=wrapper_match.entry.audit_url,  # type: ignore[arg-type]
+                        url=wrapper_match.entry.audit_url,
                         title=(
                             f"Wraps {wrapper_match.entry.name} "
                             f"(owner: {wrapper_match.account_owner[:12]}…) — "
@@ -425,7 +424,7 @@ async def _process_protocol(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"{firm} audit cited on protocol homepage",
                         weight=4,
                     )
@@ -434,7 +433,7 @@ async def _process_protocol(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"Wrapper of {wrapper_tag} (cited on homepage)",
                         weight=4,
                     )
@@ -469,14 +468,14 @@ async def _process_protocol(
             display_name=name,
             protocol_type=f"{category} on {chain.value}",
             languages=languages,
-            github_repo=(repo_metadata.url if repo_metadata and repo_metadata.exists else None),  # type: ignore[arg-type]
+            github_repo=(repo_metadata.url if repo_metadata and repo_metadata.exists else None),
             loc_estimate=(repo_metadata.loc_estimate if repo_metadata else None),
-            docs_url=None,  # type: ignore[arg-type]
-            bounty_program=bounty_program,  # type: ignore[arg-type]
-            bounty_url=bounty_url,  # type: ignore[arg-type]
+            docs_url=None,
+            bounty_program=bounty_program,
+            bounty_url=bounty_url,
             bounty_max_payout_usd=bounty_payout,
             defillama_slug=slug,
-            defillama_audit_links=merged_audit_links,  # type: ignore[arg-type]
+            defillama_audit_links=merged_audit_links,
             defillama_audit_count=dl_audit_count,
             defillama_audit_note=dl_audit_note,
             github_audits_folder_exists=bool(
@@ -687,10 +686,7 @@ async def discover_from_defillama_catalog(
     """
     s = settings()
     scan_date = scan_date or date.today()
-    if chains is not None:
-        configured_chains = set(chains)
-    else:
-        configured_chains = {Chain(c) for c in s.chain_list}
+    configured_chains = set(chains) if chains is not None else {Chain(c) for c in s.chain_list}
 
     catalog = DefiLlamaCatalog()
     await catalog.load(client=client)

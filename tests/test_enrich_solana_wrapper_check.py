@@ -9,9 +9,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from tvl_scanner.enrich.solana_wrapper_check import (
-    LstRegistryEntry,
-    WrapperMatch,
-    WrapperProgramEntry,
     check_lst_wrapper,
     check_wrapper_program,
     compute_on_chain_lst_tvl,

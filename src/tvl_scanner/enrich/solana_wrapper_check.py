@@ -36,8 +36,6 @@ from typing import Any
 import httpx
 import yaml
 
-from tvl_scanner.http import HttpError, get_json
-
 log = logging.getLogger(__name__)
 
 
