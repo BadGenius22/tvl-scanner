@@ -125,3 +125,98 @@
   # ALM fund-movement files use domain names the generic list misses:
   # MainnetController/ForeignController, ALMProxy, RateLimitHelpers, PSM.
   extra_keywords: [controller, ratelimit, psm, alm]
+
+# ---- Added from the 2026-07 audit session (all fork-verified NOTHING_SUBMITTABLE
+#      at the pinned commit; watching for the NEXT fund-path delta). ----
+
+- slug: ostium
+  display_name: Ostium (perps)
+  github: https://github.com/0xOstium/smart-contracts-public
+  chains: [arbitrum]
+  languages: [solidity]
+  # Arbitrum perps DEX. Fund logic: OstiumVault (async LP issuance —
+  # receiveAssets/sendAssets), OstiumTrading + OstiumTradingCallbacks
+  # (collateral/PnL settlement). Audited 2026-07-02 @ main 8390ce4 (v1.5.0) =
+  # NOTHING_SUBMITTABLE (3 real bugs all fork-refuted below bar in BOTH price
+  # regimes — the over-collat share-price clamp neutralizes share-manipulation).
+  # Watch the NEXT fund-path delta on the vault/callbacks.
+  branch: main
+  audited_at_commit: 8390ce4
+  audited_at_date: 2026-07-02
+  bounty_program: immunefi
+  bounty_max_payout_usd: 200000
+  extra_keywords: [vault, trading, callback, registry]
+
+- slug: origin-arm
+  display_name: Origin ARM (arm-oeth)
+  github: https://github.com/OriginProtocol/arm-oeth
+  chains: [ethereum]
+  languages: [solidity]
+  # Origin Automated Redemption Manager (Lido/Ethena ARMs — OETH/OS redemption
+  # liquidity). Immunefi $1M. Audited 2026-07-03 @ main de24cd4: the fresh
+  # "improved ARM pricing" delta was on OUT-OF-SCOPE EthenaARM; in-scope LidoARM
+  # ran an OLDER deployed impl (deployed-code gate FAILED pre-audit). Watch for
+  # deltas that land on the IN-SCOPE deployed ARM impls (verify deployed==repo).
+  branch: main
+  audited_at_commit: de24cd4
+  audited_at_date: 2026-07-03
+  bounty_program: immunefi
+  bounty_max_payout_usd: 1000000
+  extra_keywords: [arm, redemption, market, price]
+
+- slug: origin-dollar
+  display_name: Origin Dollar (OUSD/OETH + strategies)
+  github: https://github.com/OriginProtocol/origin-dollar
+  chains: [ethereum]
+  languages: [solidity]
+  # OUSD/OETH rebasing core + strategy adapters. Immunefi $1M. Audited
+  # 2026-07-03 @ master c52692d9: the fresh MorphoV2Strategy delta passed gates
+  # but was empirically refuted (donation moves checkBalance one-shot/rate-capped,
+  # re-throttled by permissioned+capped+dripped rebase + 1:1 mint → EV-negative).
+  # Watch for NEW strategy adapters / checkBalance changes.
+  branch: master
+  audited_at_commit: c52692d9
+  audited_at_date: 2026-07-03
+  bounty_program: immunefi
+  bounty_max_payout_usd: 1000000
+  extra_keywords: [strategy, vault, rebase, checkbalance]
+
+- slug: enzyme-onyx
+  display_name: Enzyme Onyx (protocol-onyx)
+  github: https://github.com/enzymefinance/protocol-onyx
+  chains: [ethereum, arbitrum, base, plume]
+  languages: [solidity]
+  # Async ERC-7540-like vault FRAMEWORK (shared singleton per chain, ~$67.5M
+  # TVL). Immunefi $200k (Crit = 10%-of-affected, min $20k), NO KYC, Primacy of
+  # Impact. Audited 2026-07-03 @ main 8ae6f58 = NOTHING_SUBMITTABLE (cached-
+  # admin-scalar price + no ERC-7540 operator model + no transfer hooks +
+  # vault-favorable double-floor rounding neutralize the permissionless surface).
+  # Freshest surface = components/value/position-trackers + transfer-validators
+  # (LinearCreditDebtTracker + ChainlinkAce were the Jan-2026 additions). Watch
+  # for new components/trackers/validators.
+  branch: main
+  audited_at_commit: 8ae6f58
+  audited_at_date: 2026-07-03
+  bounty_program: immunefi
+  bounty_max_payout_usd: 200000
+  extra_keywords: [shares, valuation, queue, tracker, handler, fee]
+
+- slug: notional-exponent
+  display_name: Notional Exponent (notional-v4)
+  github: https://github.com/notional-finance/notional-v4
+  chains: [ethereum]
+  languages: [solidity]
+  # Leveraged-yield ERC-4626-ish product (Morpho routing, async withdraw queues,
+  # custom oracles, 24-dec shares). Immunefi $250k, Primacy of Impact, KYC.
+  # Gate-checked 2026-07-04 = NO-GO on TVL: ~$1,651 total (empty pre-TVL mainnet
+  # deploy; HEAD == deploy/testnet-deploy). Scope/deployed-code/fresh-delta ALL
+  # passed (14 EIP-1967 proxies == repo HEAD; Midas/Pareto/InfiniFi/Concrete +
+  # MorphoLendingRouter are the fresh unaudited surface). PARKED — revisit when
+  # TVL > ~$1-2M (would back a mid-5-figure Critical). Baseline = last-reviewed
+  # HEAD so delta-watch surfaces only NEW code AND we can re-poll TVL then.
+  branch: main
+  audited_at_commit: 8dcb898
+  audited_at_date: 2026-07-04
+  bounty_program: immunefi
+  bounty_max_payout_usd: 250000
+  extra_keywords: [vault, router, withdrawrequest, strategy, oracle]
