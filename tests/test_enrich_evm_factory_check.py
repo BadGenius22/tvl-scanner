@@ -13,7 +13,6 @@ from tvl_scanner.enrich.evm_factory_check import (
 )
 from tvl_scanner.models import Chain
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Pure helpers
 # ─────────────────────────────────────────────────────────────────────────────
@@ -99,12 +98,11 @@ async def test_check_factory_attribution_matches_uniswap_v3_pool() -> None:
         # Return the factory address, padded to 32 bytes
         return "0x" + "0" * 24 + UNI_V3_FACTORY[2:]
 
-    with patch.dict(os.environ, {"TVL_SCANNER_RPC_ETHEREUM": "https://rpc.test/"}):
-        with patch(
-            "tvl_scanner.enrich.evm_factory_check._rpc_call",
-            new=AsyncMock(side_effect=mock_rpc),
-        ):
-            result = await check_factory_attribution(Chain.ETHEREUM, POOL)
+    with patch.dict(os.environ, {"TVL_SCANNER_RPC_ETHEREUM": "https://rpc.test/"}), patch(
+        "tvl_scanner.enrich.evm_factory_check._rpc_call",
+        new=AsyncMock(side_effect=mock_rpc),
+    ):
+        result = await check_factory_attribution(Chain.ETHEREUM, POOL)
 
     assert result is not None
     assert result.contract_address == POOL
@@ -123,12 +121,11 @@ async def test_check_factory_attribution_unknown_factory_returns_none() -> None:
     async def mock_rpc(url, method, params, client):
         return "0x" + "0" * 24 + UNKNOWN_FACTORY[2:]
 
-    with patch.dict(os.environ, {"TVL_SCANNER_RPC_ETHEREUM": "https://rpc.test/"}):
-        with patch(
-            "tvl_scanner.enrich.evm_factory_check._rpc_call",
-            new=AsyncMock(side_effect=mock_rpc),
-        ):
-            result = await check_factory_attribution(Chain.ETHEREUM, POOL)
+    with patch.dict(os.environ, {"TVL_SCANNER_RPC_ETHEREUM": "https://rpc.test/"}), patch(
+        "tvl_scanner.enrich.evm_factory_check._rpc_call",
+        new=AsyncMock(side_effect=mock_rpc),
+    ):
+        result = await check_factory_attribution(Chain.ETHEREUM, POOL)
 
     assert result is None
 
@@ -141,12 +138,11 @@ async def test_check_factory_attribution_eth_call_revert_returns_none() -> None:
     async def mock_rpc(url, method, params, client):
         return None  # _rpc_call returns None on revert/error
 
-    with patch.dict(os.environ, {"TVL_SCANNER_RPC_ETHEREUM": "https://rpc.test/"}):
-        with patch(
-            "tvl_scanner.enrich.evm_factory_check._rpc_call",
-            new=AsyncMock(side_effect=mock_rpc),
-        ):
-            result = await check_factory_attribution(Chain.ETHEREUM, POOL)
+    with patch.dict(os.environ, {"TVL_SCANNER_RPC_ETHEREUM": "https://rpc.test/"}), patch(
+        "tvl_scanner.enrich.evm_factory_check._rpc_call",
+        new=AsyncMock(side_effect=mock_rpc),
+    ):
+        result = await check_factory_attribution(Chain.ETHEREUM, POOL)
 
     assert result is None
 
@@ -203,11 +199,10 @@ async def test_check_factory_attribution_no_rpc_url_returns_none() -> None:
     env_clean = {
         k: v for k, v in os.environ.items() if not k.startswith("TVL_SCANNER_RPC_")
     }
-    with patch.dict(os.environ, env_clean, clear=True):
-        with patch(
-            "tvl_scanner.enrich.evm_factory_check.get_secret", return_value=None
-        ):
-            result = await check_factory_attribution(
-                Chain.ETHEREUM, "0xabcdef1234567890abcdef1234567890abcdef12"
-            )
-            assert result is None
+    with patch.dict(os.environ, env_clean, clear=True), patch(
+        "tvl_scanner.enrich.evm_factory_check.get_secret", return_value=None
+    ):
+        result = await check_factory_attribution(
+            Chain.ETHEREUM, "0xabcdef1234567890abcdef1234567890abcdef12"
+        )
+        assert result is None

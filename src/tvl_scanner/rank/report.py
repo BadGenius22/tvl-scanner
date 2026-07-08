@@ -165,7 +165,7 @@ def _candidate_body(candidate: CandidateRecord) -> str:
         lines.append(f"- **GitHub**: {candidate.github_repo}")
     if candidate.docs_url:
         lines.append(f"- **Docs**: {candidate.docs_url}")
-    lines.append(f"- **Languages**: {', '.join(l.value for l in candidate.languages)}")
+    lines.append(f"- **Languages**: {', '.join(lang.value for lang in candidate.languages)}")
     lines.append("")
 
     # Verification status. Render differently per chain:
@@ -179,7 +179,7 @@ def _candidate_body(candidate: CandidateRecord) -> str:
         lines.append("## Reproducible build (OtterSec)")
         lines.append("")
         if candidate.is_verified:
-            lines.append(f"- **Status**: ✓ Registered in OtterSec verified-builds DB")
+            lines.append("- **Status**: ✓ Registered in OtterSec verified-builds DB")
             if candidate.compiler_version:
                 lines.append(f"- **Verification ref**: `{candidate.compiler_version}`")
             lines.append(
@@ -198,7 +198,7 @@ def _candidate_body(candidate: CandidateRecord) -> str:
         lines.append("## On-chain verification (Etherscan V2)")
         lines.append("")
         if candidate.is_verified:
-            lines.append(f"- **Status**: ✓ Verified")
+            lines.append("- **Status**: ✓ Verified")
             if candidate.contract_name:
                 lines.append(f"- **Contract name**: `{candidate.contract_name}`")
             if candidate.compiler_version:
@@ -221,7 +221,7 @@ def _candidate_body(candidate: CandidateRecord) -> str:
         lines.append("")
 
     if candidate.bounty_program != "none":
-        lines.append(f"## Bounty program")
+        lines.append("## Bounty program")
         lines.append("")
         lines.append(f"- **Platform**: {candidate.bounty_program}")
         if candidate.bounty_url:

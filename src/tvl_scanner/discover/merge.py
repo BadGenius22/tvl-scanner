@@ -4,8 +4,9 @@ Dedup key: `(chain, normalized_address)`. Addresses are normalized to lowercase
 for EVM (case-insensitive), left as-is for Solana (case-sensitive base58).
 
 When the same (chain, address) appears from multiple sources, we keep the
-record with the highest tvl_usd (most recent snapshot) but merge the source
-list so downstream stages can see which discovery paths saw it.
+record with the highest tvl_usd (most recent snapshot); its single `source`
+field records the discovery path that won (multi-source provenance is not
+retained — DiscoveredContract has one source slot).
 
 Filter stages applied here (cheap filters first):
   1. TVL >= MIN_TVL_USD (redundant with per-source filters, defense in depth)

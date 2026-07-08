@@ -160,9 +160,11 @@ def test_sample_windows_zero_latest_returns_empty() -> None:
 def test_rpc_url_prefers_env_override_over_alchemy() -> None:
     """A user-set TVL_SCANNER_RPC_<CHAIN> must short-circuit Alchemy lookup —
     this is the seam that lets users plug their own node without changing code."""
-    with patch.dict(os.environ, {"TVL_SCANNER_RPC_BASE": "https://my.node/rpc"}):
-        with patch("tvl_scanner.discover.rpc.get_secret", return_value="alchemy-key"):
-            assert _rpc_url(Chain.BASE) == "https://my.node/rpc"
+    with (
+        patch.dict(os.environ, {"TVL_SCANNER_RPC_BASE": "https://my.node/rpc"}),
+        patch("tvl_scanner.discover.rpc.get_secret", return_value="alchemy-key"),
+    ):
+        assert _rpc_url(Chain.BASE) == "https://my.node/rpc"
 
 
 def test_rpc_url_falls_back_to_alchemy_when_no_env() -> None:
@@ -172,12 +174,14 @@ def test_rpc_url_falls_back_to_alchemy_when_no_env() -> None:
         for k, v in os.environ.items()
         if not k.startswith("TVL_SCANNER_RPC_")
     }
-    with patch.dict(os.environ, env_clean, clear=True):
-        with patch("tvl_scanner.discover.rpc.get_secret", return_value="alchemy-key"):
-            url = _rpc_url(Chain.BASE)
-            assert url is not None
-            assert url.startswith("https://base-mainnet.g.alchemy.com/")
-            assert url.endswith("alchemy-key")
+    with (
+        patch.dict(os.environ, env_clean, clear=True),
+        patch("tvl_scanner.discover.rpc.get_secret", return_value="alchemy-key"),
+    ):
+        url = _rpc_url(Chain.BASE)
+        assert url is not None
+        assert url.startswith("https://base-mainnet.g.alchemy.com/")
+        assert url.endswith("alchemy-key")
 
 
 def test_rpc_url_returns_none_when_no_credentials_and_no_env() -> None:
@@ -186,9 +190,11 @@ def test_rpc_url_returns_none_when_no_credentials_and_no_env() -> None:
         for k, v in os.environ.items()
         if not k.startswith("TVL_SCANNER_RPC_")
     }
-    with patch.dict(os.environ, env_clean, clear=True):
-        with patch("tvl_scanner.discover.rpc.get_secret", return_value=None):
-            assert _rpc_url(Chain.BASE) is None
+    with (
+        patch.dict(os.environ, env_clean, clear=True),
+        patch("tvl_scanner.discover.rpc.get_secret", return_value=None),
+    ):
+        assert _rpc_url(Chain.BASE) is None
 
 
 def test_rpc_url_skips_solana() -> None:
@@ -238,10 +244,12 @@ async def test_fetch_active_holders_no_rpc_url_returns_empty() -> None:
         for k, v in os.environ.items()
         if not k.startswith("TVL_SCANNER_RPC_")
     }
-    with patch.dict(os.environ, env_clean, clear=True):
-        with patch("tvl_scanner.discover.rpc.get_secret", return_value=None):
-            result = await fetch_active_holders(Chain.BASE, price_cache=PriceCache())
-            assert result == []
+    with (
+        patch.dict(os.environ, env_clean, clear=True),
+        patch("tvl_scanner.discover.rpc.get_secret", return_value=None),
+    ):
+        result = await fetch_active_holders(Chain.BASE, price_cache=PriceCache())
+        assert result == []
 
 
 async def test_fetch_active_holders_solana_returns_empty() -> None:

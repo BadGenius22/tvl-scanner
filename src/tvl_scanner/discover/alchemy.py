@@ -29,14 +29,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
 
 from tvl_scanner.config import get_secret, settings
 from tvl_scanner.enrich.defillama_prices import (
-    CHAIN_TO_DEFILLAMA_SLUG,
     TokenPrice,
     _build_coin_key,
     fetch_prices,
@@ -99,7 +98,7 @@ def _alchemy_url(chain: Chain) -> str | None:
 
 
 async def _rpc_call(
-    url: str, method: str, params: list, client: httpx.AsyncClient
+    url: str, method: str, params: list[Any], client: httpx.AsyncClient
 ) -> Any:
     """Make a single JSON-RPC call. Returns the `result` field or None on error."""
     try:
@@ -147,7 +146,7 @@ def _sample_blocks(latest: int, chain: Chain, *, lookback_days: int, samples: in
 
 async def _get_receipts_for_block(
     url: str, block_number: int, client: httpx.AsyncClient
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Fetch all tx receipts for a block via alchemy_getTransactionReceipts."""
     params = [{"blockNumber": hex(block_number)}]
     result = await _rpc_call(url, "alchemy_getTransactionReceipts", params, client)
@@ -196,7 +195,7 @@ async def _get_token_balances(
     return out
 
 
-def _extract_creations(receipts: list[dict], chain: Chain) -> list[str]:
+def _extract_creations(receipts: list[dict[str, Any]], chain: Chain) -> list[str]:
     """Pull successful contract-creation addresses from a list of receipts."""
     creations: list[str] = []
     for r in receipts:
@@ -258,7 +257,7 @@ async def fetch_fresh_deployments(
         # Step 2: fetch receipts per sampled block in parallel with bounded concurrency
         receipt_sem = asyncio.Semaphore(RECEIPT_CONCURRENCY)
 
-        async def _bounded_receipts(block_num: int) -> tuple[int, list[dict]]:
+        async def _bounded_receipts(block_num: int) -> tuple[int, list[dict[str, Any]]]:
             async with receipt_sem:
                 return block_num, await _get_receipts_for_block(url, block_num, client)
 
@@ -366,9 +365,7 @@ async def fetch_fresh_deployments(
 
             blocks_ago = latest - block
             seconds_ago = blocks_ago * block_time
-            deployed_at = datetime.fromtimestamp(
-                datetime.now().timestamp() - seconds_ago
-            ).date()
+            deployed_at = (datetime.now(tz=UTC) - timedelta(seconds=seconds_ago)).date()
 
             kept.append(
                 DiscoveredContract(

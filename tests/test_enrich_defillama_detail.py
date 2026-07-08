@@ -12,8 +12,6 @@ from tvl_scanner.audit_check.score import _defillama_sources, compute_score
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.enricher import _coerce_audit_count
 from tvl_scanner.models import (
-    AuditSource,
-    AuditSourceKind,
     Chain,
     DiscoverySource,
     EnrichedCandidate,

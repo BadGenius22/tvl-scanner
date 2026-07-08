@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.enricher import (
     _derive_languages,

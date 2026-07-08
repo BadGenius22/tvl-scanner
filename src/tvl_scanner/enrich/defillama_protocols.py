@@ -40,11 +40,18 @@ from tvl_scanner.enrich.homepage_scrape import (
 )
 from tvl_scanner.enrich.prices import PriceCache
 from tvl_scanner.enrich.solana_wrapper_check import (
-    WrapperMatch,
-    check_wrapper_program,
     compute_on_chain_lst_tvl,
 )
-from tvl_scanner.models import AuditSource, AuditSourceKind
+from tvl_scanner.models import (
+    AuditSource,
+    AuditSourceKind,
+    Chain,
+    DiscoverySource,
+    EnrichedCandidate,
+    Language,
+)
+
+log = logging.getLogger(__name__)
 
 
 def _coerce_audit_count(raw: Any) -> int | None:
@@ -55,14 +62,6 @@ def _coerce_audit_count(raw: Any) -> int | None:
         return int(raw)
     except (ValueError, TypeError):
         return None
-from tvl_scanner.models import (
-    Chain,
-    DiscoverySource,
-    EnrichedCandidate,
-    Language,
-)
-
-log = logging.getLogger(__name__)
 
 
 # DefiLlama categories worth scanning. Lending/Yield/Derivatives/CDP/Bridge/LSD
@@ -202,8 +201,11 @@ def _first_seen(protocol: dict[str, Any], scan_date: date) -> date:
     raw = protocol.get("listedAt")
     if isinstance(raw, (int, float)) and raw > 0:
         try:
+            from datetime import UTC
             from datetime import datetime as _dt
-            return _dt.fromtimestamp(float(raw)).date()
+            # UTC, not host-local: a listedAt near midnight UTC must not
+            # shift a day (and flip MAX_AGE_DAYS filtering) by timezone.
+            return _dt.fromtimestamp(float(raw), tz=UTC).date()
         except (ValueError, OSError):
             pass
     # Fallback: mid-range so freshness score is neutral
@@ -471,8 +473,8 @@ async def _process_protocol(
             languages=languages,
             github_repo=(repo_metadata.url if repo_metadata and repo_metadata.exists else None),  # type: ignore[arg-type]
             loc_estimate=(repo_metadata.loc_estimate if repo_metadata else None),
-            docs_url=None,  # type: ignore[arg-type]
-            bounty_program=bounty_program,  # type: ignore[arg-type]
+            docs_url=None,
+            bounty_program=bounty_program,
             bounty_url=bounty_url,  # type: ignore[arg-type]
             bounty_max_payout_usd=bounty_payout,
             defillama_slug=slug,
@@ -481,6 +483,9 @@ async def _process_protocol(
             defillama_audit_note=dl_audit_note,
             github_audits_folder_exists=bool(
                 repo_metadata and repo_metadata.audits_folder_exists
+            ),
+            github_audit_report_count=(
+                repo_metadata.audit_report_count if repo_metadata else 0
             ),
             precomputed_audit_sources=precomputed_sources,
             onchain_address=onchain_address,
@@ -687,10 +692,7 @@ async def discover_from_defillama_catalog(
     """
     s = settings()
     scan_date = scan_date or date.today()
-    if chains is not None:
-        configured_chains = set(chains)
-    else:
-        configured_chains = {Chain(c) for c in s.chain_list}
+    configured_chains = set(chains) if chains is not None else {Chain(c) for c in s.chain_list}
 
     catalog = DefiLlamaCatalog()
     await catalog.load(client=client)

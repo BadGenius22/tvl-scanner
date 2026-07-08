@@ -22,7 +22,6 @@ from datetime import date
 from tvl_scanner.config import settings
 from tvl_scanner.models import AuditedCandidate, CandidateRecord
 
-
 # Weight distribution — sums to 1.0
 W_TVL = 0.25
 W_FRESH = 0.20
@@ -140,7 +139,9 @@ def _why_interesting(
     return " • ".join(parts)
 
 
-def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[str]:
+def _focus_areas(
+    candidate: AuditedCandidate, edge_keywords: list[str], *, scan_date: date
+) -> list[str]:
     """Generate suggested focus areas for the VAULT_CONTEXT.md lift.
 
     Hints are emitted in priority order: verification red flags first (they
@@ -196,8 +197,9 @@ def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[
             "Solana-specific: verify account validation, PDA derivation, and Anchor constraint coverage"
         )
 
-    # Freshness hint
-    scan_age = (date.today() - candidate.first_seen).days
+    # Freshness hint — measured against the scan date, not the wall clock,
+    # so backdated/reproduced scans stay consistent with age_days.
+    scan_age = (scan_date - candidate.first_seen).days
     if scan_age < 60:
         suggestions.append(
             f"Brand-new contract ({scan_age}d old) — check initialization racing, first-caller bootstrap invariants"
@@ -255,7 +257,7 @@ def rank_candidate(candidate: AuditedCandidate, *, scan_date: date) -> Candidate
         edge_match_score=round(edge_s, 2),
         bounty_score=round(bounty_s, 2),
         edge_match_keywords=edge_keywords,
-        focus_areas_suggested=_focus_areas(candidate, edge_keywords),
+        focus_areas_suggested=_focus_areas(candidate, edge_keywords, scan_date=scan_date),
         inferred_platform=_infer_platform(candidate),  # type: ignore[arg-type]
         inferred_mode=_infer_mode(candidate),  # type: ignore[arg-type]
         why_interesting=_why_interesting(candidate, age_days, edge_keywords),

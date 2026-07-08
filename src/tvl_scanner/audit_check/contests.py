@@ -171,7 +171,7 @@ async def check_all_contests(
 
     if tasks:
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
-        for key, result in zip(task_keys, task_results):
+        for key, result in zip(task_keys, task_results, strict=True):
             if isinstance(result, BaseException):
                 hits: list[ContestHit] = []
             else:
@@ -190,7 +190,7 @@ async def check_all_contests(
             results.append(
                 AuditSource(
                     source=hit.kind,
-                    url=hit.html_url,
+                    url=hit.html_url,  # type: ignore[arg-type]  # pydantic coerces str -> HttpUrl
                     title=hit.repo_full_name,
                     weight=3,
                 )

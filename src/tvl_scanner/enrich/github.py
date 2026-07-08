@@ -125,7 +125,16 @@ def _is_rate_limit_error(exc: HttpError) -> bool:
     as 'org does not exist'.
     """
     msg = str(exc).lower()
-    return "429" in msg or "rate limited" in msg or "rate limit exceeded" in msg
+    return (
+        "429" in msg
+        or "rate limited" in msg
+        or "rate limit exceeded" in msg
+        # Secondary-limit 403 body: "You have exceeded a secondary rate
+        # limit..." — none of the phrases above match it, and mis-classifying
+        # it poisons the org negative-cache for the rest of the scan.
+        or "secondary rate limit" in msg
+        or "abuse detection" in msg
+    )
 
 
 def _generate_org_candidates(slug: str, display_name: str | None) -> list[str]:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import Any
 
 import httpx
 
@@ -44,7 +45,7 @@ CHAIN_TO_GT_NETWORK: dict[Chain, str] = {
 
 
 def _parse_pool_attributes(
-    attrs: dict, chain: Chain, dex_slug: str | None
+    attrs: dict[str, Any], chain: Chain, dex_slug: str | None
 ) -> DiscoveredContract | None:
     """Parse one pool record. Returns None if the record is malformed or below threshold."""
     s = settings()
@@ -84,7 +85,7 @@ def _parse_pool_attributes(
         return None
 
 
-def _extract_dex_slug(pool: dict, included: list[dict]) -> str | None:
+def _extract_dex_slug(pool: dict[str, Any], included: list[dict[str, Any]]) -> str | None:
     """Pull the DEX name from JSON:API `included` relationships, if present."""
     rel = (pool.get("relationships") or {}).get("dex") or {}
     dex_data = rel.get("data") or {}

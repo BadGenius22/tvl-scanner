@@ -69,7 +69,7 @@ def load_registry() -> list[BountyEntry]:
                 BountyEntry(
                     name=str(item["name"]),
                     slugs=slugs,
-                    platform=item.get("platform", "immunefi"),  # type: ignore[arg-type]
+                    platform=item.get("platform", "immunefi"),
                     url=str(item["url"]),
                     max_payout_usd=(
                         int(item["max_payout_usd"])

@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
 import httpx
 
@@ -72,7 +73,7 @@ def _is_solana_program_id(address: str) -> bool:
     return bool(_BASE58_ALPHABET.match(address))
 
 
-def _parse_ottersec_response(payload: dict) -> VerificationResult:
+def _parse_ottersec_response(payload: dict[str, Any]) -> VerificationResult:
     """Parse an OtterSec verify API response into our shared VerificationResult.
 
     Field mapping:
