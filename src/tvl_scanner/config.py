@@ -203,4 +203,4 @@ class Settings(BaseSettings):
 @lru_cache(maxsize=1)
 def settings() -> Settings:
     """Singleton accessor. Reloads only when cache is cleared (tests)."""
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

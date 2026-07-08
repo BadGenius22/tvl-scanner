@@ -36,6 +36,7 @@ import httpx
 from tvl_scanner.config import get_secret
 from tvl_scanner.discover.alchemy import CHAIN_TO_ALCHEMY_SUBDOMAIN
 from tvl_scanner.discover.rpc import _rpc_call
+from tvl_scanner.http import shared_ssl_context
 from tvl_scanner.models import Chain
 
 log = logging.getLogger(__name__)
@@ -389,7 +390,7 @@ async def fetch_contract_name(
 
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=15.0)
+        client = httpx.AsyncClient(timeout=15.0, verify=shared_ssl_context())
     assert client is not None
     try:
         name_result = await _rpc_call(
@@ -449,7 +450,7 @@ async def check_factory_attribution(
 
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=15.0)
+        client = httpx.AsyncClient(timeout=15.0, verify=shared_ssl_context())
     assert client is not None
 
     try:

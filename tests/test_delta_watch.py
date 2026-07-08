@@ -61,7 +61,7 @@ def test_classify_fund_path_with_extra_keywords() -> None:
     assert classify_fund_path("contracts/tranches/strategies/figure/FigureStrategy.sol", kw) is None
     assert classify_fund_path("contracts/tranches/StrataCDO.sol", kw) is None
     # Merged list (global + target extras) catches them
-    merged = kw + ["cdo", "accounting", "strateg", "cooldown", "redemption"]
+    merged = [*kw, "cdo", "accounting", "strateg", "cooldown", "redemption"]
     assert classify_fund_path("contracts/tranches/DYSAccounting.sol", merged) == "accounting"
     assert classify_fund_path("contracts/tranches/strategies/figure/FigureStrategy.sol", merged) == "strateg"
     assert classify_fund_path("contracts/tranches/StrataCDO.sol", merged) == "cdo"
@@ -74,7 +74,7 @@ def test_classify_fund_path_excludes_nonproduction_artifacts() -> None:
     FILENAME but are not exploitable code — they must be dropped so they don't
     inflate the delta. Regression from the 2026-06-29 Veda run, where all 41
     'fund-path' files were specs/JSONs/PDFs."""
-    kw = settings().FUND_PATH_KEYWORDS + ["teller", "accountant", "manager", "boring"]
+    kw = [*settings().FUND_PATH_KEYWORDS, "teller", "accountant", "manager", "boring"]
     # Formal-verification specs / harnesses / confs (the `certora/` dir)
     assert classify_fund_path("certora/specs/teller_basic.spec", kw) is None
     assert classify_fund_path("certora/harness/TellerWithMultiAssetSupportHarness.sol", kw) is None

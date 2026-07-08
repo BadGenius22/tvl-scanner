@@ -14,13 +14,13 @@ Stage flow:
 from __future__ import annotations
 
 from datetime import date
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
-class Chain(str, Enum):
+class Chain(StrEnum):
     ETHEREUM = "ethereum"
     ARBITRUM = "arbitrum"
     BASE = "base"
@@ -30,13 +30,13 @@ class Chain(str, Enum):
     SOLANA = "solana"
 
 
-class Language(str, Enum):
+class Language(StrEnum):
     SOLIDITY = "solidity"
     RUST = "rust"
     MOVE = "move"
 
 
-class DiscoverySource(str, Enum):
+class DiscoverySource(StrEnum):
     GECKOTERMINAL = "geckoterminal"
     BIRDEYE = "birdeye"
     DEFILLAMA_CATALOG = "defillama_catalog"
@@ -48,7 +48,7 @@ class DiscoverySource(str, Enum):
     EXPLORER_VERIFIED = "explorer_verified"
 
 
-class AuditSourceKind(str, Enum):
+class AuditSourceKind(StrEnum):
     DEFILLAMA = "defillama"
     GITHUB_AUDITS_FOLDER = "github_audits_folder"
     SOLODIT = "solodit"

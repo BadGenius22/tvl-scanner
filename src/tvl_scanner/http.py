@@ -8,6 +8,8 @@ passed via the `headers` kwarg on request methods, not stored on the client.
 from __future__ import annotations
 
 import logging
+import ssl
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -21,6 +23,16 @@ from tenacity import (
 from tvl_scanner.config import settings
 
 log = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def shared_ssl_context() -> ssl.SSLContext:
+    """Process-wide TLS context. Loading the CA bundle costs ~25ms per
+    httpx client; helpers that spin up short-lived clients (homepage scrape,
+    RPC checks) multiply that into seconds per scan. Every client
+    construction in this codebase should pass `verify=shared_ssl_context()`.
+    """
+    return httpx.create_ssl_context()
 
 
 class HttpError(RuntimeError):
@@ -52,13 +64,23 @@ async def get_json(
     s = settings()
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=s.HTTP_TIMEOUT_SECONDS, follow_redirects=True)
+        client = httpx.AsyncClient(
+            timeout=s.HTTP_TIMEOUT_SECONDS,
+            follow_redirects=True,
+            verify=shared_ssl_context(),
+        )
     assert client is not None  # for mypy
 
     try:
         async for attempt in AsyncRetrying(
             stop=stop_after_attempt(s.HTTP_MAX_RETRIES),
-            wait=wait_exponential(multiplier=s.HTTP_BACKOFF_SECONDS, min=1, max=30),
+            # min scales down with the multiplier so HTTP_BACKOFF_SECONDS=0
+            # (tests) means no sleep at all; production (2.0) keeps min=1.
+            wait=wait_exponential(
+                multiplier=s.HTTP_BACKOFF_SECONDS,
+                min=min(1.0, s.HTTP_BACKOFF_SECONDS),
+                max=30,
+            ),
             retry=retry_if_exception_type(RETRYABLE),
             reraise=True,
         ):
@@ -89,6 +111,7 @@ def make_client(headers: dict[str, str] | None = None) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=s.HTTP_TIMEOUT_SECONDS,
         headers=headers or {},
+        verify=shared_ssl_context(),
         # Follow 301s: GitHub permanently redirects renamed repos/orgs (e.g. an
         # Immunefi target that rebrands — marsfoundation → sparkdotfi) within
         # api.github.com. Not following them surfaces the rename as a spurious

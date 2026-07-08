@@ -23,7 +23,12 @@ from tvl_scanner.audit_check.contests import ContestHit, check_all_contests
 from tvl_scanner.audit_check.score import compute_score
 from tvl_scanner.config import settings
 from tvl_scanner.http import make_client
-from tvl_scanner.models import AuditedCandidate, AuditSourceKind, EnrichedCandidate
+from tvl_scanner.models import (
+    AuditedCandidate,
+    AuditSource,
+    AuditSourceKind,
+    EnrichedCandidate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +54,7 @@ async def check_one(
         and candidate.defillama_audit_count > 0
     )
     if has_defillama_audits:
-        contest_sources: list = []
+        contest_sources: list[AuditSource] = []
     else:
         contest_sources = await check_all_contests(
             candidate.display_name,

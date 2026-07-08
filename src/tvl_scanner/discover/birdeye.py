@@ -21,7 +21,8 @@ most EVM fresh-pool discovery flows through GeckoTerminal.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -43,7 +44,7 @@ CHAIN_TO_BIRDEYE: dict[Chain, str] = {
 }
 
 
-def _parse_token(item: dict, chain: Chain) -> DiscoveredContract | None:
+def _parse_token(item: dict[str, Any], chain: Chain) -> DiscoveredContract | None:
     """Parse one new_listing token record. Returns None if below threshold or malformed.
 
     Field names are defensive — Birdeye has historically changed field names
@@ -78,7 +79,9 @@ def _parse_token(item: dict, chain: Chain) -> DiscoveredContract | None:
             return None
 
         if isinstance(created_at_raw, (int, float)):
-            first_seen = datetime.fromtimestamp(float(created_at_raw)).date()
+            # UTC, not host-local — keeps first_seen consistent with rpc.py
+            # and avoids day-shift on non-UTC hosts.
+            first_seen = datetime.fromtimestamp(float(created_at_raw), tz=UTC).date()
         elif isinstance(created_at_raw, str):
             first_seen = datetime.fromisoformat(
                 created_at_raw.replace("Z", "+00:00")
@@ -148,7 +151,7 @@ async def fetch_top_pairs(
         return []
 
     # Response shape varies by Birdeye API version. Be defensive.
-    raw_items: list[dict] = []
+    raw_items: list[dict[str, Any]] = []
     if isinstance(payload, dict):
         data = payload.get("data")
         if isinstance(data, dict):

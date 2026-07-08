@@ -41,7 +41,7 @@ import asyncio
 import logging
 import os
 import random
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -212,10 +212,8 @@ async def _rpc_call(
             )
             if response.status_code in _RETRYABLE_STATUS and attempt < max_retries:
                 retry_after_raw = response.headers.get("retry-after", "")
-                if retry_after_raw.isdigit():
-                    delay = min(int(retry_after_raw), 5)
-                else:
-                    delay = 2  # short fixed backoff, single retry
+                # honour Retry-After (capped) or a short fixed backoff
+                delay = min(int(retry_after_raw), 5) if retry_after_raw.isdigit() else 2
                 await asyncio.sleep(delay)
                 continue
             response.raise_for_status()
@@ -410,13 +408,15 @@ async def _get_block_timestamp(
     if not isinstance(result, dict):
         return None
     ts_raw = result.get("timestamp")
+    if not isinstance(ts_raw, (str, int)):
+        return None
     try:
         ts = int(ts_raw, 16) if isinstance(ts_raw, str) else int(ts_raw)
-    except (TypeError, ValueError):
+    except ValueError:
         return None
     if ts <= 0:
         return None
-    return datetime.fromtimestamp(ts, tz=timezone.utc).date()
+    return datetime.fromtimestamp(ts, tz=UTC).date()
 
 
 async def fetch_active_holders(

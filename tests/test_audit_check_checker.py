@@ -5,8 +5,6 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from tvl_scanner.audit_check.checker import check_one
 from tvl_scanner.models import (
     AuditSource,

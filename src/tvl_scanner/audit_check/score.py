@@ -264,7 +264,7 @@ def _github_folder_source(candidate: EnrichedCandidate) -> list[AuditSource]:
     return [
         AuditSource(
             source=AuditSourceKind.GITHUB_AUDITS_FOLDER,
-            url=audits_url,
+            url=audits_url,  # type: ignore[arg-type]  # pydantic coerces str -> HttpUrl
             weight=weight,
         )
     ]

@@ -111,7 +111,7 @@ def _target_slug(
     if dl_match and dl_match.get("slug"):
         return str(dl_match["slug"])
     # Fall back to `<chain>-<shortaddr>` — unique, safe for filenames
-    short = contract.address[:12].lower().lstrip("0x")
+    short = contract.address.lower().removeprefix("0x")[:10]
     return f"{contract.chain.value}-{short}"
 
 
@@ -148,6 +148,7 @@ async def enrich_one(
     dl_audit_count: int | None = None
     dl_audit_note: str | None = None
     dl_slug: str | None = None
+    dl_audit_links: list[str] = _audit_links(dl_match)
     if dl_match:
         # BATCH I fix #1.1: DefiLlama sometimes returns `github=['bareorgname']`
         # which looks like a URL but isn't parseable. Require "github.com" in
@@ -180,6 +181,11 @@ async def enrich_one(
                 note_raw = detail.get("audit_note")
                 if isinstance(note_raw, str) and note_raw.strip():
                     dl_audit_note = note_raw.strip()
+                # Merge the detail endpoint's (typically richer) audit links
+                # with the flat catalog's set — mirrors the catalog path.
+                for link in _audit_links(detail):
+                    if link not in dl_audit_links:
+                        dl_audit_links.append(link)
                 # Also try to extract github URL from detail if flat was empty.
                 # Same bare-org-name guard as above.
                 if not github_url:
@@ -404,14 +410,14 @@ async def enrich_one(
         display_name=on_chain_name or _display_name(contract, dl_match),
         protocol_type=_protocol_type(contract, dl_match),
         languages=languages,
-        github_repo=repo_metadata.url if repo_metadata and repo_metadata.exists else None,
+        github_repo=repo_metadata.url if repo_metadata and repo_metadata.exists else None,  # type: ignore[arg-type]
         loc_estimate=repo_metadata.loc_estimate if repo_metadata else None,
         docs_url=None,  # v1: docs discovery deferred to a later batch
-        bounty_program=bounty_program,  # type: ignore[arg-type]
+        bounty_program=bounty_program,
         bounty_url=bounty_url_raw,  # type: ignore[arg-type]
         bounty_max_payout_usd=bounty_payout,
         defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
-        defillama_audit_links=_audit_links(dl_match),
+        defillama_audit_links=dl_audit_links,  # type: ignore[arg-type]  # pydantic coerces str -> HttpUrl
         defillama_audit_count=dl_audit_count,
         defillama_audit_note=dl_audit_note,
         github_audits_folder_exists=bool(
@@ -440,13 +446,25 @@ async def enrich_all(
         # Run GitHub lookups with bounded concurrency to stay under rate limits
         sem = asyncio.Semaphore(10)
 
-        async def _bounded(c: DiscoveredContract) -> EnrichedCandidate:
+        async def _bounded(c: DiscoveredContract) -> EnrichedCandidate | None:
             async with sem:
-                return await enrich_one(c, catalog, client=client)
+                try:
+                    return await enrich_one(c, catalog, client=client)
+                except Exception as exc:
+                    # One bad candidate (malformed URL failing HttpUrl
+                    # validation, unexpected API shape) must not abort the
+                    # whole enrichment stage.
+                    log.warning(
+                        "enrich: skipped %s:%s — %s", c.chain.value, c.address, exc
+                    )
+                    return None
 
         results = await asyncio.gather(*(_bounded(c) for c in contracts))
-    log.info("enrich: %d candidates enriched", len(results))
-    return list(results)
+    enriched = [r for r in results if r is not None]
+    if len(enriched) < len(contracts):
+        log.warning("enrich: %d candidate(s) skipped on error", len(contracts) - len(enriched))
+    log.info("enrich: %d candidates enriched", len(enriched))
+    return enriched
 
 
 def write_enriched(

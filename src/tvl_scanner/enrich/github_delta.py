@@ -236,7 +236,11 @@ def _count_code_lines(patch: str | None) -> tuple[int | None, int | None]:
         return None, None
     code_add = code_del = 0
     for line in patch.splitlines():
-        if line[:3] in ("+++", "---") or line.startswith("@@"):
+        # Skip only real file headers ("+++ b/path", "--- a/path", /dev/null
+        # for adds/deletes). A bare `line[:3] in ("+++", "---")` check would
+        # also swallow genuine column-0 code lines like `+++nonce;` and
+        # misclassify a real change as comment-only.
+        if line.startswith(("+++ ", "--- ", "@@")):
             continue
         if line.startswith("+") and not _is_comment_or_blank(line[1:]):
             code_add += 1

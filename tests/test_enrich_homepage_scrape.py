@@ -3,16 +3,12 @@
 from __future__ import annotations
 
 import re
-from unittest.mock import AsyncMock, patch
 
-import httpx
-import pytest
 from pytest_httpx import HTTPXMock
 
 from tvl_scanner.enrich.homepage_scrape import (
     AUDIT_FIRM_PHRASES,
     WRAPPER_PHRASES,
-    HomepageScrapeResult,
     _extract_audit_relevant_links,
     _registered_domain,
     _slugify_display_name,
@@ -20,7 +16,6 @@ from tvl_scanner.enrich.homepage_scrape import (
     scrape_homepage,
     scrape_homepage_with_fallback,
 )
-
 
 # Synthetic homepage HTML samples
 HYPERLANE_HTML = """

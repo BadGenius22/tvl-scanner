@@ -28,11 +28,12 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
+from typing import Any
 
 import httpx
 
-from tvl_scanner.config import get_secret, settings
+from tvl_scanner.config import get_secret
 from tvl_scanner.http import HttpError, get_json
 from tvl_scanner.models import Chain
 
@@ -83,6 +84,9 @@ _EMPTY_NOT_VERIFIED = VerificationResult(is_verified=False)
 # spacing keeps us under the ceiling without slowing the rest of the pipeline.
 _ETHERSCAN_MAX_CONCURRENT = 2
 _ETHERSCAN_MIN_INTERVAL_SEC = 0.35
+# Wait before the single NOTOK retry — long enough to exit the free-tier
+# rate-limit window. Zeroed in tests (conftest.py).
+_ETHERSCAN_NOTOK_RETRY_SEC = 1.5
 _etherscan_semaphore: asyncio.Semaphore | None = None
 _etherscan_last_call: float = 0.0
 _etherscan_lock: asyncio.Lock | None = None
@@ -103,7 +107,7 @@ def _get_etherscan_lock() -> asyncio.Lock:
 
 
 async def _throttled_get_json(
-    url: str, *, params: dict, client: httpx.AsyncClient | None
+    url: str, *, params: dict[str, Any], client: httpx.AsyncClient | None
 ) -> object:
     """get_json with a global Etherscan semaphore + min-interval throttle.
 
@@ -136,7 +140,7 @@ def _is_evm_address(address: str) -> bool:
     )
 
 
-def _parse_etherscan_result(item: dict) -> VerificationResult:
+def _parse_etherscan_result(item: dict[str, Any]) -> VerificationResult:
     """Parse one result entry from Etherscan's getsourcecode response.
 
     Etherscan returns an array with a single item; if the contract is NOT
@@ -231,7 +235,6 @@ async def check_verification(
         log.info("etherscan skipped: no API key in pass store")
         return _EMPTY_NOT_VERIFIED
 
-    s = settings()
     url = "https://api.etherscan.io/v2/api"
     params = {
         "chainid": CHAIN_TO_ETHERSCAN_ID[chain],
@@ -260,7 +263,7 @@ async def check_verification(
                 break  # success — proceed to parse
             if attempt == 0:
                 # NOTOK / partial response — wait + retry once
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(_ETHERSCAN_NOTOK_RETRY_SEC)
                 continue
             msg = payload.get("message") or payload.get("result")
             log.info(
@@ -352,7 +355,7 @@ async def fetch_creation_dates_batch(
             if ts <= 0:
                 continue
             out[entry_addr_raw.lower()] = datetime.fromtimestamp(
-                ts, tz=timezone.utc
+                ts, tz=UTC
             ).date()
 
     return out
