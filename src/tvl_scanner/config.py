@@ -134,6 +134,19 @@ class Settings(BaseSettings):
     # target) persists under ARTIFACTS_DIR so reruns are incremental.
     DELTA_WATCH_STATE_FILE: str = "delta_watch_state.json"
     DELTA_WATCH_CONCURRENCY: int = 5
+
+    # Deploy-watch: alert when a watched on-chain program/contract is upgraded or
+    # first deployed. Some audit triggers are ON-CHAIN deploy events rather than
+    # git commits (which delta-watch covers): a protocol ships already-written,
+    # repo-visible code to mainnet, flipping a dormant in-scope surface live —
+    # delta-watch (git-based) cannot see that upgrade. State (last-observed deploy
+    # fingerprint per target) persists under ARTIFACTS_DIR so reruns are incremental.
+    DEPLOY_WATCH_STATE_FILE: str = "deploy_watch_state.json"
+    DEPLOY_WATCH_CONCURRENCY: int = 4
+    # JSON-RPC fallbacks used when the `alchemy` secret is absent. Public
+    # endpoints are rate-limited but fine for a small watchlist.
+    SOLANA_RPC_FALLBACK: str = "https://solana-rpc.publicnode.com"
+    ETH_RPC_FALLBACK: str = "https://ethereum.publicnode.com"
     # A changed file is a "fund-exit path" if its path (case-insensitive)
     # contains one of these substrings. Tuned from the omnipair delta where the
     # security-relevant changes were exactly withdraw/remove_collateral/

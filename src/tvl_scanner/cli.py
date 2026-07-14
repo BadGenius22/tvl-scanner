@@ -154,6 +154,38 @@ def delta_watch(
     console.print(f"\n[bold green]✓ Delta-watch report written:[/] {summary}")
 
 
+@app.command("deploy-watch")
+def deploy_watch(
+    targets: str | None = typer.Option(
+        None,
+        "--targets",
+        help="Comma-separated target slugs to check (e.g. marinade,defisaver-aavev4). "
+        "Defaults to the full data/deploy_watch_targets.yaml watchlist.",
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="Python logging level."),
+) -> None:
+    """Flag on-chain DEPLOY/UPGRADE of a watched program or contract.
+
+    Complements delta-watch: some audit triggers are on-chain deploy events, not
+    git commits. A protocol can ship already-written, repo-visible code to mainnet
+    (flipping a dormant in-scope surface live) — a git watcher can't see that, this
+    can. Compares each target's current deploy fingerprint (Solana program slot /
+    EVM code hash) to a baseline and reports any that just went live.
+    """
+    _setup_logging(log_level)
+    from tvl_scanner.deploy_watch import run_deploy_watch
+
+    target_set: set[str] | None = (
+        {t.strip().lower() for t in targets.split(",") if t.strip()} if targets else None
+    )
+    console.print(
+        f"[bold cyan]tvl-scanner {__version__}[/]  deploy-watch"
+        f"{f'  targets={len(target_set)}' if target_set else '  (full watchlist)'}"
+    )
+    summary = asyncio.run(run_deploy_watch(targets=target_set))
+    console.print(f"\n[bold green]✓ Deploy-watch report written:[/] {summary}")
+
+
 @app.command("check-secrets")
 def check_secrets() -> None:
     """Verify all pass-backed API keys are reachable. Does NOT print the secret values."""

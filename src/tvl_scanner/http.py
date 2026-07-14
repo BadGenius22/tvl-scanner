@@ -83,6 +83,51 @@ async def get_json(
     return None  # unreachable, mypy satisfaction
 
 
+async def post_json(
+    url: str,
+    *,
+    json_body: dict[str, Any] | list[Any],
+    headers: dict[str, str] | None = None,
+    client: httpx.AsyncClient | None = None,
+) -> Any:
+    """POST `json_body` to `url` and return parsed JSON.
+
+    Same retry/timeout/429 handling as `get_json`, for endpoints that require a
+    POST body — notably JSON-RPC nodes (Solana / EVM) used by the deploy-watch.
+    """
+    s = settings()
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(timeout=s.HTTP_TIMEOUT_SECONDS, follow_redirects=True)
+    assert client is not None  # for mypy
+
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(s.HTTP_MAX_RETRIES),
+            wait=wait_exponential(multiplier=s.HTTP_BACKOFF_SECONDS, min=1, max=30),
+            retry=retry_if_exception_type(RETRYABLE),
+            reraise=True,
+        ):
+            with attempt:
+                response = await client.post(url, json=json_body, headers=headers)
+                if response.status_code == 429:
+                    raise httpx.ReadTimeout("429 rate limited")
+                if response.status_code >= 500:
+                    raise httpx.ReadTimeout(f"upstream {response.status_code}")
+                response.raise_for_status()
+                return response.json()
+    except httpx.HTTPStatusError as exc:
+        raise HttpError(
+            f"HTTP {exc.response.status_code} for {url}: {exc.response.text[:200]}"
+        ) from exc
+    except RETRYABLE as exc:
+        raise HttpError(f"Transport failure for {url}: {exc}") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+    return None  # unreachable, mypy satisfaction
+
+
 def make_client(headers: dict[str, str] | None = None) -> httpx.AsyncClient:
     """Construct a reusable AsyncClient with the global timeout applied."""
     s = settings()

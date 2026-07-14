@@ -1,0 +1,49 @@
+# Deploy-watch targets — on-chain programs/contracts whose DEPLOY or UPGRADE
+# flips a dormant, in-scope audit surface live. Unlike delta_watch_targets.yaml
+# (git commits), these fire on an on-chain deploy event a repo watcher can't see.
+#
+# Each target's baseline is the current (dormant) fingerprint. A change means the
+# surface just went live -> re-audit. Seeded from the 2026-07-14 Immunefi scan.
+#
+# Fields:
+#   slug        unique id
+#   chain       solana | evm
+#   note        why a deploy here is an audit trigger (bounty, surface)
+#   enabled     set false to skip without deleting
+#   # solana:
+#   program_id  the upgradeable program's account address
+#   baseline_slot  last-deployed slot considered "known"; upgrade => slot > this
+#   # evm:
+#   rpc         ethereum (which chain's node to query)
+#   address     contract address to watch for code
+#   baseline_codehash  null = fire the first time the address has ANY code
+
+- slug: marinade
+  chain: solana
+  program_id: MarBmsSgKXdrN1egZf5sqe1TMai9K1rChYNDJgjq7aD
+  baseline_slot: 229946024   # 2023-11-14 audited deploy; mainnet frozen since
+  enabled: true
+  note: >-
+    Immunefi $250k, no-KYC, whole-repo scope. Mainnet frozen at its 2023-11 audit.
+    Fresh 2026-06 delta (create_canonical_stake / delinquent_upgrader / depositfee /
+    merge-stake rewrite, +882/-550) is repo-only, UNSHIPPED. An upgrade past this
+    slot lands that unaudited fund-path code live -> re-audit immediately.
+
+- slug: defisaver-aavev4
+  chain: evm
+  rpc: ethereum
+  address: "0x6c044c0D3801499bCAbfAd458B70880bc518e9F7"   # AaveV4 TakerPositionManager (from DeFi Saver MainnetAaveV4Addresses.sol)
+  # 2026-07-14: FIRED on first run — this PM (+ Giver/Config PMs) is already
+  # deployed+verified on mainnet, i.e. Aave V4 is LIVE (corrected the DeFi Saver
+  # recon's "not live" assumption). Re-baselined to the observed code so it now
+  # fires only on a FUTURE code change (a PM upgrade). NOTE Aave V4 is NOT yet in
+  # any Immunefi scope + Aave is KYC -> not submittable until Aave scopes V4.
+  baseline_codehash: "sha256:c2368dc39370800a"
+  enabled: true
+  note: >-
+    Immunefi $350k (DeFi Saver, no-KYC). AaveV4Withdraw/Borrow pass arbitrary
+    onBehalf+to through this Taker Position Manager, gated by a victim-granted
+    per-wallet enablement — theft roots in the (out-of-scope) Aave PM auth, so the
+    DeFi Saver angle needs the DFS adapter itself to misuse it. Bigger prize: watch
+    for Aave to add V4/position-managers to its own Immunefi scope (~$1M) — this PM
+    upgrading (a code change here) is a proxy signal that V4 is evolving.
