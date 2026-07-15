@@ -84,7 +84,23 @@ async def check_all(
             async with sem:
                 return await check_one(c, client=client, token_cache=token_cache)
 
-        results = await asyncio.gather(*(_bounded(c) for c in candidates))
+        # return_exceptions=True so a single candidate's failure (e.g. an
+        # unhandled GitHub-search error) drops only that candidate rather than
+        # aborting Stage 3 and losing every candidate's audit status.
+        raw = await asyncio.gather(
+            *(_bounded(c) for c in candidates), return_exceptions=True
+        )
+
+    results: list[AuditedCandidate] = []
+    for candidate, result in zip(candidates, raw, strict=True):
+        if isinstance(result, BaseException):
+            log.error(
+                "audit-check failed for %s, dropping candidate: %s",
+                candidate.display_name,
+                result,
+            )
+            continue
+        results.append(result)
 
     log.info(
         "audit-check: token_cache held %d unique (token,org) pairs — "
@@ -95,7 +111,7 @@ async def check_all(
 
     n_under = sum(1 for r in results if r.under_audited)
     log.info("audit-check: %d/%d candidates under-audited", n_under, len(results))
-    return list(results)
+    return results
 
 
 def write_audit_status(

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from tvl_scanner.config import settings
-from tvl_scanner.enrich import bounty, github_registry
+from tvl_scanner.enrich import bounty, github_registry, immunefi
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.evm_bytecode_check import check_bytecode_match
@@ -140,6 +140,7 @@ async def enrich_one(
     catalog: DefiLlamaCatalog,
     *,
     client: Any = None,
+    immunefi_index: immunefi.ImmunefiIndex | None = None,
 ) -> EnrichedCandidate:
     """Enrich a single contract. See module docstring for field derivation."""
     dl_match = catalog.lookup(contract.protocol_guess or "") if contract.protocol_guess else None
@@ -235,7 +236,7 @@ async def enrich_one(
             precomputed_sources.append(
                 AuditSource(
                     source=AuditSourceKind.WRAPPER_PROGRAM,
-                    url=bytecode_match.entry.audit_url,  # type: ignore[arg-type]
+                    url=bytecode_match.entry.audit_url,
                     title=(
                         f"Bytecode matches {bytecode_match.entry.name} "
                         f"(upstream: {bytecode_match.entry.upstream_protocol}, "
@@ -308,7 +309,7 @@ async def enrich_one(
             precomputed_sources.append(
                 AuditSource(
                     source=AuditSourceKind.FACTORY_ATTRIBUTION,
-                    url=factory_match.entry.audit_url,  # type: ignore[arg-type]
+                    url=factory_match.entry.audit_url,
                     title=(
                         f"factory() returns {factory_match.entry.name} factory "
                         f"({factory_match.factory_address}) — pool of audited "
@@ -334,7 +335,7 @@ async def enrich_one(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"{firm} audit cited on protocol homepage",
                         weight=4,
                     )
@@ -343,7 +344,7 @@ async def enrich_one(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"Wrapper of {wrapper_tag} (cited on homepage)",
                         weight=4,
                     )
@@ -399,6 +400,30 @@ async def enrich_one(
     bounty_url_raw = bounty_entry.url if bounty_entry else None
     bounty_payout = bounty_entry.max_payout_usd if bounty_entry else None
 
+    # Live Immunefi catalogue — fills bounty_program when the curated seeds file
+    # missed it (a fresh / unregistered program). Matches by in-scope contract
+    # ADDRESS (definitive) or protocol name. Only upgrades from "none" so the
+    # curated registry (with hand-tuned URLs) stays authoritative where it hit.
+    if bounty_program == "none" and immunefi_index is not None:
+        im_match = immunefi.match(
+            immunefi_index,
+            address=contract.address,
+            display_name=on_chain_name or _display_name(contract, dl_match),
+            defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
+            target_name=_target_slug(contract, dl_match),
+        )
+        if im_match is not None:
+            bounty_program = "immunefi"
+            bounty_url_raw = im_match.url
+            bounty_payout = im_match.max_payout_usd
+            log.info(
+                "live-immunefi bounty match: %s -> %s (by %s, max $%s)",
+                _target_slug(contract, dl_match),
+                im_match.slug,
+                im_match.reason,
+                im_match.max_payout_usd,
+            )
+
     return EnrichedCandidate(
         chain=contract.chain,
         address=contract.address,
@@ -410,14 +435,14 @@ async def enrich_one(
         display_name=on_chain_name or _display_name(contract, dl_match),
         protocol_type=_protocol_type(contract, dl_match),
         languages=languages,
-        github_repo=repo_metadata.url if repo_metadata and repo_metadata.exists else None,  # type: ignore[arg-type]
+        github_repo=repo_metadata.url if repo_metadata and repo_metadata.exists else None,
         loc_estimate=repo_metadata.loc_estimate if repo_metadata else None,
         docs_url=None,  # v1: docs discovery deferred to a later batch
         bounty_program=bounty_program,
-        bounty_url=bounty_url_raw,  # type: ignore[arg-type]
+        bounty_url=bounty_url_raw,
         bounty_max_payout_usd=bounty_payout,
         defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
-        defillama_audit_links=dl_audit_links,  # type: ignore[arg-type]  # pydantic coerces str -> HttpUrl
+        defillama_audit_links=dl_audit_links,
         defillama_audit_count=dl_audit_count,
         defillama_audit_note=dl_audit_note,
         github_audits_folder_exists=bool(
@@ -443,28 +468,47 @@ async def enrich_all(
         catalog = DefiLlamaCatalog()
         await catalog.load(client=client)
 
+        # Fetch the live Immunefi catalogue once and index it, so every candidate
+        # is tagged with its REAL current bounty status (address- or name-matched)
+        # rather than only the curated seeds file. Best-effort: [] on failure.
+        immunefi_index = immunefi.build_index(await immunefi.fetch_programs(client=client))
+
         # Run GitHub lookups with bounded concurrency to stay under rate limits
         sem = asyncio.Semaphore(10)
 
-        async def _bounded(c: DiscoveredContract) -> EnrichedCandidate | None:
+        async def _bounded(c: DiscoveredContract) -> EnrichedCandidate:
             async with sem:
-                try:
-                    return await enrich_one(c, catalog, client=client)
-                except Exception as exc:
-                    # One bad candidate (malformed URL failing HttpUrl
-                    # validation, unexpected API shape) must not abort the
-                    # whole enrichment stage.
-                    log.warning(
-                        "enrich: skipped %s:%s — %s", c.chain.value, c.address, exc
-                    )
-                    return None
+                return await enrich_one(
+                    c, catalog, client=client, immunefi_index=immunefi_index
+                )
 
-        results = await asyncio.gather(*(_bounded(c) for c in contracts))
-    enriched = [r for r in results if r is not None]
-    if len(enriched) < len(contracts):
-        log.warning("enrich: %d candidate(s) skipped on error", len(contracts) - len(enriched))
-    log.info("enrich: %d candidates enriched", len(enriched))
-    return enriched
+        # return_exceptions=True so ONE candidate's failure (an unexpected upstream
+        # response shape, a transport error that escaped the inner guards) drops
+        # only that candidate instead of aborting the whole stage — matching the
+        # per-source fault isolation in Stage 1's discover_all.
+        raw = await asyncio.gather(
+            *(_bounded(c) for c in contracts), return_exceptions=True
+        )
+
+    results: list[EnrichedCandidate] = []
+    for contract, result in zip(contracts, raw, strict=True):
+        if isinstance(result, BaseException):
+            log.error(
+                "enrich failed for %s (%s:%s), dropping candidate: %s",
+                contract.protocol_guess or "?",
+                contract.chain.value,
+                contract.address[:12],
+                result,
+            )
+            continue
+        results.append(result)
+    log.info(
+        "enrich: %d/%d candidates enriched (%d dropped on error)",
+        len(results),
+        len(contracts),
+        len(contracts) - len(results),
+    )
+    return results
 
 
 def write_enriched(

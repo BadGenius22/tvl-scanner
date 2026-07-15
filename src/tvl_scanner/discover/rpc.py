@@ -212,7 +212,7 @@ async def _rpc_call(
             )
             if response.status_code in _RETRYABLE_STATUS and attempt < max_retries:
                 retry_after_raw = response.headers.get("retry-after", "")
-                # honour Retry-After (capped) or a short fixed backoff
+                # honor Retry-After when numeric (capped at 5s), else short fixed backoff
                 delay = min(int(retry_after_raw), 5) if retry_after_raw.isdigit() else 2
                 await asyncio.sleep(delay)
                 continue

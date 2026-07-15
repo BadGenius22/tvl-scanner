@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.enricher import (
@@ -11,10 +12,17 @@ from tvl_scanner.enrich.enricher import (
     _display_name,
     _protocol_type,
     _target_slug,
+    enrich_all,
     enrich_one,
 )
 from tvl_scanner.enrich.github import RepoMetadata
-from tvl_scanner.models import Chain, DiscoveredContract, DiscoverySource, Language
+from tvl_scanner.models import (
+    Chain,
+    DiscoveredContract,
+    DiscoverySource,
+    EnrichedCandidate,
+    Language,
+)
 
 
 def _contract(
@@ -165,3 +173,71 @@ async def test_enrich_one_no_github_url_skips_github_call() -> None:
 
     assert result.github_repo is None
     assert result.display_name == "NoGitHub"
+
+
+def _enriched(name: str, address: str) -> EnrichedCandidate:
+    return EnrichedCandidate(
+        chain=Chain.ARBITRUM,
+        address=address,
+        tvl_usd=250000,
+        first_seen=date(2026, 3, 15),
+        source=DiscoverySource.GECKOTERMINAL,
+        target_name=name.lower(),
+        display_name=name,
+        protocol_type="unknown protocol on arbitrum",
+        languages=[Language.SOLIDITY],
+    )
+
+
+@contextlib.asynccontextmanager
+async def _fake_client():
+    yield MagicMock()
+
+
+async def test_enrich_all_isolates_a_single_candidate_failure() -> None:
+    """One candidate raising must drop only that candidate, not abort the stage.
+
+    Regression guard for the return_exceptions=True fault isolation in
+    enrich_all — matches Stage 1's per-source resilience.
+    """
+    good = _contract(guess="GoodProto", address="0x" + "1" * 40)
+    bad = _contract(guess="BadProto", address="0x" + "2" * 40)
+
+    async def fake_enrich_one(
+        contract: DiscoveredContract, catalog: object, **_kw: object
+    ) -> EnrichedCandidate:
+        if contract.protocol_guess == "BadProto":
+            raise RuntimeError("simulated upstream failure")
+        return _enriched("GoodProto", contract.address)
+
+    with (
+        patch("tvl_scanner.enrich.enricher.make_client", _fake_client),
+        patch.object(DefiLlamaCatalog, "load", new=AsyncMock()),
+        patch("tvl_scanner.enrich.immunefi.fetch_programs", new=AsyncMock(return_value=[])),
+        patch("tvl_scanner.enrich.enricher.enrich_one", side_effect=fake_enrich_one),
+    ):
+        results = await enrich_all([good, bad])
+
+    # The stage returns the survivor rather than raising.
+    assert len(results) == 1
+    assert results[0].display_name == "GoodProto"
+
+
+async def test_enrich_all_returns_empty_when_all_fail() -> None:
+    """If every candidate fails, the stage returns [] instead of raising."""
+    contracts = [
+        _contract(guess="A", address="0x" + "a" * 40),
+        _contract(guess="B", address="0x" + "b" * 40),
+    ]
+
+    with (
+        patch("tvl_scanner.enrich.enricher.make_client", _fake_client),
+        patch.object(DefiLlamaCatalog, "load", new=AsyncMock()),
+        patch(
+            "tvl_scanner.enrich.enricher.enrich_one",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+    ):
+        results = await enrich_all(contracts)
+
+    assert results == []

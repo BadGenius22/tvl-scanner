@@ -190,7 +190,7 @@ async def check_all_contests(
             results.append(
                 AuditSource(
                     source=hit.kind,
-                    url=hit.html_url,  # type: ignore[arg-type]  # pydantic coerces str -> HttpUrl
+                    url=hit.html_url,
                     title=hit.repo_full_name,
                     weight=3,
                 )

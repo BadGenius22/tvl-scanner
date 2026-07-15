@@ -537,11 +537,22 @@ async def run_delta_watch(
             async with sem:
                 return await check_target(t, state, client=client)
 
-        gathered = await asyncio.gather(*(_bounded(t) for t in watchlist))
+        # return_exceptions=True so one target's failure (an unexpected compare
+        # payload, a validation error) doesn't abort the whole watchlist and
+        # lose the state updates for every other target.
+        gathered = await asyncio.gather(
+            *(_bounded(t) for t in watchlist), return_exceptions=True
+        )
     finally:
         await client.aclose()
 
-    results = [r for r in gathered if r is not None]
+    results: list[DeltaWatchResult] = []
+    for target, outcome in zip(watchlist, gathered, strict=True):
+        if isinstance(outcome, BaseException):
+            log.error("delta-watch: %s check failed, skipping: %s", target.slug, outcome)
+            continue
+        if outcome is not None:
+            results.append(outcome)
     save_state(state, state_path)
 
     # Rank: targets with a delta first (fund-path files OR, when the file list

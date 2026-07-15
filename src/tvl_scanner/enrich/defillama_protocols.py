@@ -354,7 +354,7 @@ async def _process_protocol(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.WRAPPER_PROGRAM,
-                        url=wrapper_match.entry.audit_url,  # type: ignore[arg-type]
+                        url=wrapper_match.entry.audit_url,
                         title=(
                             f"Wraps {wrapper_match.entry.name} "
                             f"(owner: {wrapper_match.account_owner[:12]}…) — "
@@ -427,7 +427,7 @@ async def _process_protocol(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"{firm} audit cited on protocol homepage",
                         weight=4,
                     )
@@ -436,7 +436,7 @@ async def _process_protocol(
                 precomputed_sources.append(
                     AuditSource(
                         source=AuditSourceKind.HOMEPAGE_SCRAPE,
-                        url=url_for_source,  # type: ignore[arg-type]
+                        url=url_for_source,
                         title=f"Wrapper of {wrapper_tag} (cited on homepage)",
                         weight=4,
                     )
@@ -471,14 +471,14 @@ async def _process_protocol(
             display_name=name,
             protocol_type=f"{category} on {chain.value}",
             languages=languages,
-            github_repo=(repo_metadata.url if repo_metadata and repo_metadata.exists else None),  # type: ignore[arg-type]
+            github_repo=(repo_metadata.url if repo_metadata and repo_metadata.exists else None),
             loc_estimate=(repo_metadata.loc_estimate if repo_metadata else None),
             docs_url=None,
             bounty_program=bounty_program,
-            bounty_url=bounty_url,  # type: ignore[arg-type]
+            bounty_url=bounty_url,
             bounty_max_payout_usd=bounty_payout,
             defillama_slug=slug,
-            defillama_audit_links=merged_audit_links,  # type: ignore[arg-type]
+            defillama_audit_links=merged_audit_links,
             defillama_audit_count=dl_audit_count,
             defillama_audit_note=dl_audit_note,
             github_audits_folder_exists=bool(

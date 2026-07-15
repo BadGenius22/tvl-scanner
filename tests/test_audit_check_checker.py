@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from tvl_scanner.audit_check.checker import check_one
+from tvl_scanner.audit_check.checker import check_all, check_one
 from tvl_scanner.models import (
+    AuditedCandidate,
     AuditSource,
     AuditSourceKind,
     Chain,
@@ -82,3 +84,45 @@ async def test_check_one_runs_github_when_defillama_count_is_none() -> None:
     ) as mock_contests:
         await check_one(candidate)
         mock_contests.assert_called_once()
+
+
+def _audited(slug: str) -> AuditedCandidate:
+    return AuditedCandidate(
+        chain=Chain.ARBITRUM,
+        address="0xABC",
+        tvl_usd=250_000,
+        first_seen=date(2026, 3, 15),
+        source=DiscoverySource.DEFILLAMA_CATALOG,
+        target_name=slug,
+        display_name=slug,
+        protocol_type="Yield on arbitrum",
+        languages=[Language.SOLIDITY],
+        defillama_slug=slug,
+        audit_density_score=3,
+        under_audited=False,
+    )
+
+
+@contextlib.asynccontextmanager
+async def _fake_client():
+    yield MagicMock()
+
+
+async def test_check_all_isolates_a_single_candidate_failure() -> None:
+    """One candidate raising in Stage 3 must drop only that candidate, not the stage."""
+    good = _enriched(defillama_audit_count=3, defillama_slug="good")
+    bad = _enriched(defillama_audit_count=1, defillama_slug="bad")
+
+    async def fake_check_one(candidate: EnrichedCandidate, *, client: object = None, token_cache: object = None) -> AuditedCandidate:
+        if candidate.defillama_slug == "bad":
+            raise RuntimeError("simulated stage-3 failure")
+        return _audited("good")
+
+    with (
+        patch("tvl_scanner.audit_check.checker.make_client", _fake_client),
+        patch("tvl_scanner.audit_check.checker.check_one", side_effect=fake_check_one),
+    ):
+        results = await check_all([good, bad])
+
+    assert len(results) == 1
+    assert results[0].defillama_slug == "good"
