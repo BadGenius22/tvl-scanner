@@ -36,6 +36,8 @@ from typing import Any
 import httpx
 import yaml
 
+from tvl_scanner.http import shared_ssl_context
+
 log = logging.getLogger(__name__)
 
 
@@ -154,7 +156,7 @@ async def _rpc(
     """Make a JSON-RPC POST to the public Solana RPC. Returns result field or None."""
     owns_client = client is None
     if owns_client:
-        client = httpx.AsyncClient(timeout=15.0)
+        client = httpx.AsyncClient(timeout=15.0, verify=shared_ssl_context())
     assert client is not None
     try:
         response = await client.post(

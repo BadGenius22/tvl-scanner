@@ -33,6 +33,27 @@ W_BOUNTY = 0.10
 # Priority cutoff for inclusion in the final report
 PRIORITY_CUTOFF = 5.0
 
+# Protocol-type tokens whose value depends on a price feed. Price-oracle
+# manipulation is the single most-exploited bug class in the DeFiHackLabs
+# corpus, so any candidate in one of these classes gets an oracle-focused
+# audit hint. Matched as substrings against the lowercased protocol_type
+# ("Lending on arbitrum", "Leveraged Farming on base", ...).
+_PRICE_SENSITIVE_TYPE_TOKENS: tuple[str, ...] = (
+    "lend",
+    "borrow",
+    "cdp",
+    "collateral",
+    "derivativ",
+    "perp",
+    "option",
+    "synthetic",
+    "yield",
+    "vault",
+    "leverage",
+    "money market",
+    "stablecoin",
+)
+
 
 def tvl_score(tvl_usd: float) -> float:
     """Log-scaled TVL score: $100K → 0, $1M → 5, $10M → 10, capped.
@@ -139,7 +160,9 @@ def _why_interesting(
     return " • ".join(parts)
 
 
-def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[str]:
+def _focus_areas(
+    candidate: AuditedCandidate, edge_keywords: list[str], *, scan_date: date
+) -> list[str]:
     """Generate suggested focus areas for the VAULT_CONTEXT.md lift.
 
     Hints are emitted in priority order: verification red flags first (they
@@ -184,7 +207,9 @@ def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[
         )
     if "vault" in edge_keywords:
         suggestions.append(
-            "Audit share/asset conversion math carefully; first-depositor share inflation is common in vault patterns"
+            "Audit share/asset conversion math (convertToAssets/convertToShares rounding) — "
+            "ERC4626 first-depositor and donation-based share inflation are recurrent "
+            "(e.g. Edel xStock, 2026)"
         )
     if any(k in edge_keywords for k in ("aave", "compound", "silo", "pendle")):
         suggestions.append(
@@ -195,8 +220,25 @@ def _focus_areas(candidate: AuditedCandidate, edge_keywords: list[str]) -> list[
             "Solana-specific: verify account validation, PDA derivation, and Anchor constraint coverage"
         )
 
-    # Freshness hint
-    scan_age = (date.today() - candidate.first_seen).days
+    # Oracle-manipulation hint — grounded in the DeFiHackLabs corpus, where
+    # price-oracle manipulation is the most-exploited bug class (270+ incidents)
+    # and dominates 2026 losses. Fire it for protocols whose solvency depends on
+    # a price feed. Placed after the more-specific edge hints so those keep their
+    # slots (the list is capped at 5), but ahead of the generic freshness/TVL
+    # hints since it points at the highest-probability failure surface.
+    is_price_sensitive = any(
+        tok in candidate.protocol_type.lower() for tok in _PRICE_SENSITIVE_TYPE_TOKENS
+    ) or any(k in edge_keywords for k in ("aave", "compound", "silo", "pendle", "leverage"))
+    if is_price_sensitive:
+        suggestions.append(
+            "Price-oracle manipulation is the most-exploited DeFi bug class (DeFiHackLabs) — "
+            "check spot-price vs TWAP reliance, reserve/balanceOf-derived valuation, "
+            "single-source feeds, and flashloan-amplified price moves"
+        )
+
+    # Freshness hint — measured against the scan date, not the wall clock,
+    # so backdated/reproduced scans stay consistent with age_days.
+    scan_age = (scan_date - candidate.first_seen).days
     if scan_age < 60:
         suggestions.append(
             f"Brand-new contract ({scan_age}d old) — check initialization racing, first-caller bootstrap invariants"
@@ -254,7 +296,7 @@ def rank_candidate(candidate: AuditedCandidate, *, scan_date: date) -> Candidate
         edge_match_score=round(edge_s, 2),
         bounty_score=round(bounty_s, 2),
         edge_match_keywords=edge_keywords,
-        focus_areas_suggested=_focus_areas(candidate, edge_keywords),
+        focus_areas_suggested=_focus_areas(candidate, edge_keywords, scan_date=scan_date),
         inferred_platform=_infer_platform(candidate),  # type: ignore[arg-type]
         inferred_mode=_infer_mode(candidate),  # type: ignore[arg-type]
         why_interesting=_why_interesting(candidate, age_days, edge_keywords),

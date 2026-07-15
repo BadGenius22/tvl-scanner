@@ -44,6 +44,12 @@ def _enriched(
     )
 
 
+def _with_updates(candidate: EnrichedCandidate, **updates: object) -> EnrichedCandidate:
+    """Rebuild with validation — model_copy(update=...) skips it, leaving raw
+    strings in HttpUrl fields and tripping pydantic serializer warnings."""
+    return EnrichedCandidate(**{**candidate.model_dump(), **updates})
+
+
 def test_defillama_sources_capped_at_3() -> None:
     """More than 3 DefiLlama audit links should still only score 3 points."""
     candidate = _enriched(
@@ -223,13 +229,11 @@ def test_bounty_trust_source_fires_for_immunefi_with_substantial_payout() -> Non
     """
     from tvl_scanner.audit_check.score import _bounty_trust_source
 
-    candidate = _enriched()
-    candidate = candidate.model_copy(
-        update={
-            "bounty_program": "immunefi",
-            "bounty_url": "https://immunefi.com/bounty/hyperlane/",
-            "bounty_max_payout_usd": 2_500_000,
-        }
+    candidate = _with_updates(
+        _enriched(),
+        bounty_program="immunefi",
+        bounty_url="https://immunefi.com/bounty/hyperlane/",
+        bounty_max_payout_usd=2_500_000,
     )
     sources = _bounty_trust_source(candidate)
     assert len(sources) == 1
@@ -243,12 +247,11 @@ def test_bounty_trust_source_skips_low_payout() -> None:
     """A bounty below $100K is too small to imply professional audit due diligence."""
     from tvl_scanner.audit_check.score import _bounty_trust_source
 
-    candidate = _enriched().model_copy(
-        update={
-            "bounty_program": "immunefi",
-            "bounty_url": "https://immunefi.com/bounty/small/",
-            "bounty_max_payout_usd": 50_000,
-        }
+    candidate = _with_updates(
+        _enriched(),
+        bounty_program="immunefi",
+        bounty_url="https://immunefi.com/bounty/small/",
+        bounty_max_payout_usd=50_000,
     )
     assert _bounty_trust_source(candidate) == []
 
@@ -265,12 +268,11 @@ def test_compute_score_bounty_trust_pushes_above_threshold() -> None:
     """Hyperlane case: 0 audits in DL/github/contest, but Immunefi bounty $2.5M
     → BOUNTY_TRUST source contributes weight 4 → under_audited=False.
     """
-    candidate = _enriched().model_copy(
-        update={
-            "bounty_program": "immunefi",
-            "bounty_url": "https://immunefi.com/bounty/hyperlane/",
-            "bounty_max_payout_usd": 2_500_000,
-        }
+    candidate = _with_updates(
+        _enriched(),
+        bounty_program="immunefi",
+        bounty_url="https://immunefi.com/bounty/hyperlane/",
+        bounty_max_payout_usd=2_500_000,
     )
     result = compute_score(candidate, contest_sources=[])
     assert result.audit_density_score == 4  # bounty trust source = 4 pts

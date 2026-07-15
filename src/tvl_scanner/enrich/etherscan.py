@@ -84,6 +84,9 @@ _EMPTY_NOT_VERIFIED = VerificationResult(is_verified=False)
 # spacing keeps us under the ceiling without slowing the rest of the pipeline.
 _ETHERSCAN_MAX_CONCURRENT = 2
 _ETHERSCAN_MIN_INTERVAL_SEC = 0.35
+# Wait before the single NOTOK retry — long enough to exit the free-tier
+# rate-limit window. Zeroed in tests (conftest.py).
+_ETHERSCAN_NOTOK_RETRY_SEC = 1.5
 _etherscan_semaphore: asyncio.Semaphore | None = None
 _etherscan_last_call: float = 0.0
 _etherscan_lock: asyncio.Lock | None = None
@@ -260,7 +263,7 @@ async def check_verification(
                 break  # success — proceed to parse
             if attempt == 0:
                 # NOTOK / partial response — wait + retry once
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(_ETHERSCAN_NOTOK_RETRY_SEC)
                 continue
             msg = payload.get("message") or payload.get("result")
             log.info(

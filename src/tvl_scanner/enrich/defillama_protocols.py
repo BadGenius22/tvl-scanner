@@ -201,8 +201,11 @@ def _first_seen(protocol: dict[str, Any], scan_date: date) -> date:
     raw = protocol.get("listedAt")
     if isinstance(raw, (int, float)) and raw > 0:
         try:
+            from datetime import UTC
             from datetime import datetime as _dt
-            return _dt.fromtimestamp(float(raw)).date()
+            # UTC, not host-local: a listedAt near midnight UTC must not
+            # shift a day (and flip MAX_AGE_DAYS filtering) by timezone.
+            return _dt.fromtimestamp(float(raw), tz=UTC).date()
         except (ValueError, OSError):
             pass
     # Fallback: mid-range so freshness score is neutral
@@ -480,6 +483,9 @@ async def _process_protocol(
             defillama_audit_note=dl_audit_note,
             github_audits_folder_exists=bool(
                 repo_metadata and repo_metadata.audits_folder_exists
+            ),
+            github_audit_report_count=(
+                repo_metadata.audit_report_count if repo_metadata else 0
             ),
             precomputed_audit_sources=precomputed_sources,
             onchain_address=onchain_address,

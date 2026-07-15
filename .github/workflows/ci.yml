@@ -6,14 +6,17 @@ on:
   pull_request:
 
 jobs:
-  check:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
 
       - name: Install
@@ -23,11 +26,11 @@ jobs:
       # required=False in the paths tests exercise, so no `pass` store or API
       # keys are needed here. If a future test needs a token, inject it as the
       # TVL_SCANNER_<NAME> env-var fallback (see config.get_secret).
-      - name: Lint
+      - name: Lint (ruff)
         run: ruff check src/ tests/
 
-      - name: Typecheck
-        run: mypy src/
+      - name: Type check (mypy strict)
+        run: python -m mypy src/
 
-      - name: Test
-        run: pytest -q
+      - name: Tests
+        run: python -m pytest -q

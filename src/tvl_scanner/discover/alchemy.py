@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -365,9 +365,7 @@ async def fetch_fresh_deployments(
 
             blocks_ago = latest - block
             seconds_ago = blocks_ago * block_time
-            deployed_at = datetime.fromtimestamp(
-                datetime.now().timestamp() - seconds_ago
-            ).date()
+            deployed_at = (datetime.now(tz=UTC) - timedelta(seconds=seconds_ago)).date()
 
             kept.append(
                 DiscoveredContract(

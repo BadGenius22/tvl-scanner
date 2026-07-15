@@ -131,19 +131,21 @@ async def test_fetch_fresh_deployments_happy_path() -> None:
     # Pre-seed the price cache so we don't hit Coingecko
     price_cache._prices[Chain.ARBITRUM] = 3000.0
 
-    with patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"):
-        with patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)):
-            with patch(
-                "tvl_scanner.discover.alchemy._sample_blocks",
-                return_value=[95, 90],  # deterministic for this test
-            ):
-                # No ERC20 tokens → fetch_prices is never called, no mock needed
-                result = await fetch_fresh_deployments(
-                    Chain.ARBITRUM,
-                    price_cache=price_cache,
-                    lookback_days=7,
-                    sample_blocks=2,
-                )
+    with (
+        patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"),
+        patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)),
+        patch(
+            "tvl_scanner.discover.alchemy._sample_blocks",
+            return_value=[95, 90],  # deterministic for this test
+        ),
+    ):
+        # No ERC20 tokens → fetch_prices is never called, no mock needed
+        result = await fetch_fresh_deployments(
+            Chain.ARBITRUM,
+            price_cache=price_cache,
+            lookback_days=7,
+            sample_blocks=2,
+        )
 
     # 50 ETH × $3000 = $150k > $100k threshold → kept
     # 0.1 ETH × $3000 = $300 < $100k → dropped
@@ -195,22 +197,21 @@ async def test_fetch_fresh_deployments_counts_erc20_holdings() -> None:
     price_cache = PriceCache()
     price_cache._prices[Chain.ARBITRUM] = 3000.0
 
-    with patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"):
-        with patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)):
-            with patch(
-                "tvl_scanner.discover.alchemy._sample_blocks",
-                return_value=[95],
-            ):
-                with patch(
-                    "tvl_scanner.discover.alchemy.fetch_prices",
-                    new=AsyncMock(return_value=mock_prices),
-                ):
-                    result = await fetch_fresh_deployments(
-                        Chain.ARBITRUM,
-                        price_cache=price_cache,
-                        lookback_days=7,
-                        sample_blocks=1,
-                    )
+    with (
+        patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"),
+        patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)),
+        patch("tvl_scanner.discover.alchemy._sample_blocks", return_value=[95]),
+        patch(
+            "tvl_scanner.discover.alchemy.fetch_prices",
+            new=AsyncMock(return_value=mock_prices),
+        ),
+    ):
+        result = await fetch_fresh_deployments(
+            Chain.ARBITRUM,
+            price_cache=price_cache,
+            lookback_days=7,
+            sample_blocks=1,
+        )
 
     # USDC: 150,000 × $1.0 = $150,000
     # WETH: 0.5 × $3,000 = $1,500
@@ -243,22 +244,21 @@ async def test_fetch_fresh_deployments_skips_unknown_tokens() -> None:
     price_cache = PriceCache()
     price_cache._prices[Chain.ARBITRUM] = 3000.0
 
-    with patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"):
-        with patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)):
-            with patch(
-                "tvl_scanner.discover.alchemy._sample_blocks",
-                return_value=[95],
-            ):
-                with patch(
-                    "tvl_scanner.discover.alchemy.fetch_prices",
-                    new=AsyncMock(return_value={}),  # no prices returned
-                ):
-                    result = await fetch_fresh_deployments(
-                        Chain.ARBITRUM,
-                        price_cache=price_cache,
-                        lookback_days=7,
-                        sample_blocks=1,
-                    )
+    with (
+        patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"),
+        patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)),
+        patch("tvl_scanner.discover.alchemy._sample_blocks", return_value=[95]),
+        patch(
+            "tvl_scanner.discover.alchemy.fetch_prices",
+            new=AsyncMock(return_value={}),  # no prices returned
+        ),
+    ):
+        result = await fetch_fresh_deployments(
+            Chain.ARBITRUM,
+            price_cache=price_cache,
+            lookback_days=7,
+            sample_blocks=1,
+        )
 
     # Only native balance counted (ERC20 unknown → skipped), 40 ETH × $3000 = $120k
     assert len(result) == 1
@@ -279,18 +279,17 @@ async def test_fetch_fresh_deployments_zero_native_price_returns_empty() -> None
     price_cache = PriceCache()
     price_cache._prices[Chain.ARBITRUM] = 0.0
 
-    with patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"):
-        with patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)):
-            with patch(
-                "tvl_scanner.discover.alchemy._sample_blocks",
-                return_value=[95],
-            ):
-                result = await fetch_fresh_deployments(
-                    Chain.ARBITRUM,
-                    price_cache=price_cache,
-                    lookback_days=1,
-                    sample_blocks=1,
-                )
+    with (
+        patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"),
+        patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)),
+        patch("tvl_scanner.discover.alchemy._sample_blocks", return_value=[95]),
+    ):
+        result = await fetch_fresh_deployments(
+            Chain.ARBITRUM,
+            price_cache=price_cache,
+            lookback_days=1,
+            sample_blocks=1,
+        )
     assert result == []
 
 
@@ -301,9 +300,11 @@ async def test_fetch_fresh_deployments_eth_block_number_failure_returns_empty() 
             return None
         return None
 
-    with patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"):
-        with patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)):
-            result = await fetch_fresh_deployments(
-                Chain.ARBITRUM, price_cache=PriceCache()
-            )
+    with (
+        patch("tvl_scanner.discover.alchemy.get_secret", return_value="test-key"),
+        patch("tvl_scanner.discover.alchemy._rpc_call", new=AsyncMock(side_effect=mock_rpc)),
+    ):
+        result = await fetch_fresh_deployments(
+            Chain.ARBITRUM, price_cache=PriceCache()
+        )
     assert result == []

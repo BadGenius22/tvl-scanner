@@ -408,11 +408,11 @@ async def _get_block_timestamp(
     if not isinstance(result, dict):
         return None
     ts_raw = result.get("timestamp")
-    if ts_raw is None:
+    if not isinstance(ts_raw, (str, int)):
         return None
     try:
         ts = int(ts_raw, 16) if isinstance(ts_raw, str) else int(ts_raw)
-    except (TypeError, ValueError):
+    except ValueError:
         return None
     if ts <= 0:
         return None

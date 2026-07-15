@@ -32,6 +32,8 @@ from urllib.parse import urljoin, urlparse
 
 import httpx
 
+from tvl_scanner.http import shared_ssl_context
+
 log = logging.getLogger(__name__)
 
 
@@ -244,6 +246,7 @@ async def _fetch_and_extract(
         client = httpx.AsyncClient(
             timeout=15.0,
             follow_redirects=True,
+            verify=shared_ssl_context(),
             headers={
                 "User-Agent": "Mozilla/5.0 (compatible; tvl-scanner/0.5)",
                 "Accept": "text/html,application/xhtml+xml",
@@ -371,7 +374,7 @@ def rank_github_urls_for_protocol(
         if not match:
             return 0
         owner = match.group(1).lower()
-        repo = match.group(2).lower().rstrip(".git")
+        repo = match.group(2).lower().removesuffix(".git")
         s = 0
         for tok in tokens:
             if tok in (owner, repo):

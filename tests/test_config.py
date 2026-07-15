@@ -32,34 +32,42 @@ def test_settings_chain_list_parsing() -> None:
 def test_get_secret_env_fallback() -> None:
     """When pass lookup fails, env var fallback should work."""
     get_secret.cache_clear()
-    with patch.dict(os.environ, {"TVL_SCANNER_TEST_KEY": "env-fallback-value"}):
-        with patch("tvl_scanner.config.shutil.which", return_value=None):
-            value = get_secret("test_key")
-            assert value == "env-fallback-value"
+    with (
+        patch.dict(os.environ, {"TVL_SCANNER_TEST_KEY": "env-fallback-value"}),
+        patch("tvl_scanner.config.shutil.which", return_value=None),
+    ):
+        value = get_secret("test_key")
+        assert value == "env-fallback-value"
 
 
 def test_get_secret_strips_whitespace() -> None:
     """Secrets with trailing newlines should be stripped."""
     get_secret.cache_clear()
-    with patch.dict(os.environ, {"TVL_SCANNER_TEST_KEY": "  padded-value  \n"}):
-        with patch("tvl_scanner.config.shutil.which", return_value=None):
-            value = get_secret("test_key")
-            assert value == "padded-value"
+    with (
+        patch.dict(os.environ, {"TVL_SCANNER_TEST_KEY": "  padded-value  \n"}),
+        patch("tvl_scanner.config.shutil.which", return_value=None),
+    ):
+        value = get_secret("test_key")
+        assert value == "padded-value"
 
 
 def test_get_secret_missing_required_raises() -> None:
     """Required secret that is missing everywhere should raise SecretsError."""
     get_secret.cache_clear()
-    with patch.dict(os.environ, {}, clear=True):
-        with patch("tvl_scanner.config.shutil.which", return_value=None):
-            with pytest.raises(SecretsError, match="not found"):
-                get_secret("nonexistent_key", required=True)
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        patch("tvl_scanner.config.shutil.which", return_value=None),
+        pytest.raises(SecretsError, match="not found"),
+    ):
+        get_secret("nonexistent_key", required=True)
 
 
 def test_get_secret_missing_optional_returns_none() -> None:
     """Optional secret that is missing should return None, not raise."""
     get_secret.cache_clear()
-    with patch.dict(os.environ, {}, clear=True):
-        with patch("tvl_scanner.config.shutil.which", return_value=None):
-            value = get_secret("nonexistent_key", required=False)
-            assert value is None
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        patch("tvl_scanner.config.shutil.which", return_value=None),
+    ):
+        value = get_secret("nonexistent_key", required=False)
+        assert value is None

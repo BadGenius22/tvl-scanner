@@ -32,6 +32,7 @@ def _audited(
     users: int | None = 500,
     audit_density: int = 0,
     display_name: str = "Test Protocol",
+    protocol_type: str = "unknown protocol on arbitrum",
     bounty: str = "none",
 ) -> AuditedCandidate:
     return AuditedCandidate(
@@ -43,7 +44,7 @@ def _audited(
         source=DiscoverySource.GECKOTERMINAL,
         target_name="test-protocol",
         display_name=display_name,
-        protocol_type="unknown protocol on arbitrum",
+        protocol_type=protocol_type,
         languages=[Language.SOLIDITY],
         bounty_program=bounty,  # type: ignore[arg-type]
         audit_density_score=audit_density,
@@ -179,3 +180,34 @@ def test_rank_all_respects_cap() -> None:
 
 def test_priority_cutoff_constant() -> None:
     assert PRIORITY_CUTOFF == 5.0
+
+
+# ---- Corpus-grounded focus-area hints ----
+
+
+def test_focus_areas_include_oracle_hint_for_price_sensitive_type() -> None:
+    """Price-oracle manipulation is the top corpus bug class — a lending/CDP/etc.
+    candidate must surface the oracle audit hint."""
+    c = _audited(display_name="Boring Money Market", protocol_type="Lending on arbitrum")
+    result = rank_candidate(c, scan_date=date(2026, 4, 13))
+    joined = " ".join(result.focus_areas_suggested).lower()
+    assert "oracle" in joined
+
+
+def test_focus_areas_omit_oracle_hint_for_non_price_sensitive_type() -> None:
+    """A protocol whose solvency does not hinge on a price feed should not get the
+    oracle hint (keeps the capped list focused on what's relevant)."""
+    c = _audited(
+        display_name="JPEG NFT Marketplace",
+        protocol_type="NFT Marketplace on ethereum",
+    )
+    result = rank_candidate(c, scan_date=date(2026, 4, 13))
+    joined = " ".join(result.focus_areas_suggested).lower()
+    assert "oracle manipulation" not in joined
+
+
+def test_focus_areas_vault_hint_cites_erc4626_donation() -> None:
+    c = _audited(display_name="Yield Vault", protocol_type="Yield on arbitrum")
+    result = rank_candidate(c, scan_date=date(2026, 4, 13))
+    joined = " ".join(result.focus_areas_suggested).lower()
+    assert "erc4626" in joined or "donation" in joined

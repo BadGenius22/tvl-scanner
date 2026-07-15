@@ -28,6 +28,32 @@ app = typer.Typer(
 console = Console()
 
 
+def _parse_exclude_slugs(text: str) -> set[str]:
+    """Parse an exclude-slugs file: one slug per line, or markdown table rows.
+
+    For table rows (`| 1 | Aave V3 | ... |`) the first cell that slugifies to
+    something non-numeric wins — pure-numeric cells are rank columns, not
+    slugs. Display names slugify with hyphens ("Aave V3" → "aave-v3") so they
+    match `target_name` the way the ranked report renders it.
+    """
+    import re
+
+    slugs: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        tokens = [t.strip() for t in stripped.split("|")]
+        for token in tokens or [stripped]:
+            if not token:
+                continue
+            slug = re.sub(r"[^a-z0-9]+", "-", token.lower()).strip("-")
+            if slug and not slug.isdigit():
+                slugs.add(slug)
+                break
+    return slugs
+
+
 def _setup_logging(level: str) -> None:
     logging.basicConfig(
         level=level,
@@ -82,26 +108,12 @@ def run(
 
     exclude_slugs: set[str] = set()
     if exclude_slugs_file:
-        import re
         from pathlib import Path
         path = Path(exclude_slugs_file).expanduser()
         if not path.is_file():
             console.print(f"[red]exclude-slugs-file not found: {path}[/]")
             raise typer.Exit(code=1)
-        for line in path.read_text().splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
-                continue
-            # Tolerate markdown table cells like `| Protocol | … |` — extract slug-like token
-            tokens = [t.strip() for t in stripped.split("|")]
-            for token in tokens or [stripped]:
-                if not token:
-                    continue
-                # Take the first token that looks like a slug (lowercase, hyphenated)
-                slug = re.sub(r"[^a-z0-9-]", "", token.lower())
-                if slug:
-                    exclude_slugs.add(slug)
-                    break
+        exclude_slugs = _parse_exclude_slugs(path.read_text())
         console.print(f"[yellow]Excluding {len(exclude_slugs)} slug(s) from {path.name}[/]")
 
     console.print(

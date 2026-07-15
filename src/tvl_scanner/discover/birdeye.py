@@ -21,7 +21,7 @@ most EVM fresh-pool discovery flows through GeckoTerminal.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -79,7 +79,9 @@ def _parse_token(item: dict[str, Any], chain: Chain) -> DiscoveredContract | Non
             return None
 
         if isinstance(created_at_raw, (int, float)):
-            first_seen = datetime.fromtimestamp(float(created_at_raw)).date()
+            # UTC, not host-local — keeps first_seen consistent with rpc.py
+            # and avoids day-shift on non-UTC hosts.
+            first_seen = datetime.fromtimestamp(float(created_at_raw), tz=UTC).date()
         elif isinstance(created_at_raw, str):
             first_seen = datetime.fromisoformat(
                 created_at_raw.replace("Z", "+00:00")
