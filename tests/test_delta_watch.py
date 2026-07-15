@@ -37,6 +37,40 @@ def test_classify_fund_path_matches_real_delta_files() -> None:
     assert classify_fund_path("src/utils/liquidity_delta_circuit_breaker.rs", kw) == "liquidity"
 
 
+def test_classify_fund_path_matches_corpus_grounded_surfaces() -> None:
+    """The DeFiHackLabs-grounded keyword additions must classify the file
+    surfaces those exploit classes actually live in — none of these had prior
+    coverage from the original omnipair-tuned list."""
+    kw = settings().FUND_PATH_KEYWORDS
+    # Staking / rewards (Liquid-Staking + Staking-Pool categories)
+    assert classify_fund_path("src/staking/StakePool.sol", kw) == "stake"
+    assert classify_fund_path("contracts/rewards/RewardDistributor.sol", kw) == "reward"
+    assert classify_fund_path("src/strategies/HarvestVault.sol", kw) is not None
+    # Signature / permit
+    assert classify_fund_path("contracts/token/ERC20Permit.sol", kw) == "permit"
+    assert classify_fund_path("src/SignatureChecker.sol", kw) == "signatur"
+    # Reentrancy callback entry point
+    assert classify_fund_path("src/FlashLoanCallback.sol", kw) is not None
+    # ERC4626 rate math
+    assert classify_fund_path("contracts/vault/Erc4626Converter.sol", kw) is not None
+    assert classify_fund_path("src/yield/Rebalancer.sol", kw) == "rebalanc"
+    # Proxy / migration
+    assert classify_fund_path("src/proxy/UUPSUpgradeUtils.sol", kw) == "upgrade"
+    assert classify_fund_path("contracts/MigrateV2.sol", kw) == "migrat"
+    # Reserve-derived pricing + bridge/ZK proof
+    assert classify_fund_path("src/pool/ReserveLogic.sol", kw) == "reserve"
+    assert classify_fund_path("src/bridge/ProofVerifier.sol", kw) is not None
+
+
+def test_classify_fund_path_new_keywords_stay_precise() -> None:
+    """The additions are path-token matches, so benign non-fund files that merely
+    share a stem must NOT be swept in."""
+    kw = settings().FUND_PATH_KEYWORDS
+    assert classify_fund_path("src/utils/StringUtils.sol", kw) is None
+    assert classify_fund_path("src/interfaces/IERC20.sol", kw) is None
+    assert classify_fund_path("src/math/SafeCast.sol", kw) is None
+
+
 def test_classify_fund_path_excludes_tests_mocks_docs() -> None:
     kw = settings().FUND_PATH_KEYWORDS
     assert classify_fund_path("tests/test_withdraw.rs", kw) is None
