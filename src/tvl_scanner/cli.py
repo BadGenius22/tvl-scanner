@@ -135,6 +135,63 @@ def run(
     console.print(f"\n[bold green]✓ Report written:[/] {summary}")
 
 
+@app.command("immunefi-scan")
+def immunefi_scan(
+    chains: str | None = typer.Option(
+        None,
+        "--chains",
+        help="Comma-separated chain filter (e.g. ethereum,arbitrum,base). "
+        "Default: ALL supported chains — the point is to rank the whole bounty universe.",
+    ),
+    no_kyc: bool = typer.Option(
+        False, "--no-kyc", help="Only programs that do NOT require KYC (full-payout solo hunting)."
+    ),
+    min_bounty: int | None = typer.Option(
+        None, "--min-bounty", help="Drop programs whose max payout is below this floor (USD)."
+    ),
+    cutoff: float = typer.Option(5.0, "--cutoff", help="Priority cutoff for inclusion in report."),
+    cap: int = typer.Option(60, "--cap", help="Maximum candidates in report."),
+    log_level: str = typer.Option("INFO", "--log-level", help="Python logging level."),
+) -> None:
+    """Rank the FULL live Immunefi bounty catalogue by the priority formula.
+
+    Seeds a candidate from every active Immunefi program (not just the TVL-pool
+    intersection that `run` covers), resolves TVL + deploy-age best-effort, folds
+    in each program's prior-audit record, and ranks them so the under-audited,
+    fresh, high-payout bounties surface first. Writes reports/YYYY-MM-DD-immunefi-scan.md.
+
+    Note: audit-checking the 0-audit candidates does a rate-limited GitHub contest
+    search, so a full pass can take a few minutes.
+    """
+    _setup_logging(log_level)
+    from tvl_scanner.pipeline import run_immunefi_scan
+
+    s = settings()
+    if chains is not None:
+        chain_list: list[Chain] | None = [Chain(c.strip()) for c in chains.split(",") if c.strip()]
+    else:
+        chain_list = None  # None → all supported chains
+    _ = s  # settings loaded (validates .env) even though thresholds aren't overridden here
+
+    console.print(
+        f"[bold cyan]tvl-scanner {__version__}[/]  immunefi-scan  "
+        f"chains={'all' if chain_list is None else ', '.join(c.value for c in chain_list)}  "
+        f"{'no-kyc  ' if no_kyc else ''}"
+        f"{f'min_bounty=${min_bounty:,}  ' if min_bounty else ''}"
+        f"cutoff={cutoff}  cap={cap}"
+    )
+    summary = asyncio.run(
+        run_immunefi_scan(
+            chain_list,
+            cutoff=cutoff,
+            cap=cap,
+            kyc=False if no_kyc else None,
+            min_bounty=min_bounty,
+        )
+    )
+    console.print(f"\n[bold green]✓ Immunefi-scan report written:[/] {summary}")
+
+
 @app.command("delta-watch")
 def delta_watch(
     targets: str | None = typer.Option(

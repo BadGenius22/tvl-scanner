@@ -26,6 +26,12 @@ python -m tvl_scanner run --log-level DEBUG
 python -m tvl_scanner delta-watch
 python -m tvl_scanner delta-watch --targets omnipair,project-0
 
+# Immunefi-scan: rank the FULL live Immunefi bounty catalogue by the priority
+# formula (bounty-first discovery — seeds a candidate from EVERY active program,
+# not just the TVL-pool intersection `run` covers). Best for target selection.
+python -m tvl_scanner immunefi-scan --no-kyc --min-bounty 500000
+python -m tvl_scanner immunefi-scan --chains ethereum,arbitrum,base --cap 60
+
 # Verify pass-backed secrets are reachable
 tvl-scanner check-secrets
 
@@ -62,6 +68,10 @@ Stage 4: Rank+Report → reports/YYYY-MM-DD-scan.md + candidates/*.md (Candidate
 
 `delta_watch.py` (`tvl-scanner delta-watch`) is a separate entry point for a different question: *what fresh, unaudited code landed on fund-exit paths since a protocol's last audit?* It is independent of the discover→rank pipeline. For each entry in `data/delta_watch_targets.yaml` it GitHub-`compare`s a baseline commit (precedence: `audited_at_commit` → last-checked commit from `artifacts/delta_watch_state.json` → current HEAD on first run) against HEAD, classifies changed files against `Settings.FUND_PATH_KEYWORDS` (withdraw/borrow/liquidate/collateral/mint/flashloan/...), scores by fund-path-change magnitude, and writes `reports/YYYY-MM-DD-delta-watch.md` + per-target YAML records (same vault-liftable frontmatter as scan candidates). The GitHub `/compare` + `/commits` access lives in `enrich/github_delta.py` (reuses `enrich/github.py` auth + `http.get_json`). State persists so reruns are incremental. Rationale: the highest-yield audit surface is the delta of an actively-developed protocol, not a protocol audited cold.
 
+### Immunefi-scan mode (bounty-first discovery — alternate entry)
+
+`enrich/immunefi_catalog.py` (`tvl-scanner immunefi-scan`, orchestrated by `pipeline.run_immunefi_scan`) inverts the normal flow. The 4-stage `run` and the DefiLlama-catalog path discover protocols by TVL and then *tag* whichever ones happen to have a bounty (`enrich/immunefi.py`), so they are blind to any active bounty whose protocol the TVL/pool discovery never surfaces. Immunefi-scan instead seeds one `EnrichedCandidate` from EVERY active program in the live Immunefi catalogue (`immunefi.fetch_raw`), so the whole bounty universe gets ranked by the same priority formula — this is the target-selection tool. Immunefi's catalogue already carries the bounty (payout/KYC/url), the in-scope contract addresses (chain inferred from the explorer domain — etherscan/arbiscan/basescan/…), the github repo, the languages, and the prior-audit record; the builder resolves only TVL + category (DefiLlama name-match, reusing `DefiLlamaCatalog.lookup`) and the TRUE deploy date (`enrich/etherscan.py`, EVM only) itself. A program with no in-scope contract on a supported `Chain` is skipped and counted, never silently dropped. The folded audit count (max of DefiLlama's and Immunefi's own `audits` list) feeds `defillama_audit_count`, which also makes Stage 3 skip the rate-limited GitHub contest search for already-audited programs. Filters: `--no-kyc` (full-payout solo hunting), `--min-bounty`, `--chains`. Writes `reports/YYYY-MM-DD-immunefi-scan.md`. Default chain scope is ALL supported chains (not the `.env` subset) — the point is the full universe.
+
 Top-level orchestration lives in `src/tvl_scanner/pipeline.py`. There are **two parallel discovery paths** that converge before Stage 2 enrichment, deduped by `defillama_slug`:
 
 - **Pool-based** (`discover/`): GeckoTerminal + Birdeye + Alchemy fresh-deployments + RPC active-holders → `DiscoveredContract` → standard `enrich_all`
@@ -74,7 +84,7 @@ The dedup step (`pipeline._dedupe_enriched`) prefers the DefiLlama catalog recor
 | Stage | Module dir | Key files | Output model |
 |-------|-----------|-----------|--------------|
 | 1 | `discover/` | `merge.py` (orchestrator), `geckoterminal.py`, `birdeye.py`, `alchemy.py`, `rpc.py` | `DiscoveredContract` |
-| 2 | `enrich/` | `enricher.py` (orchestrator), `defillama.py`, `defillama_protocols.py` (catalog path), `etherscan.py`, `github.py`, `homepage_scrape.py`, `evm_factory_check.py`, `solana_wrapper_check.py`, `ottersec.py`, `bounty.py` (curated bounty registry) + `immunefi.py` (live Immunefi catalogue — address/name match) | `EnrichedCandidate` |
+| 2 | `enrich/` | `enricher.py` (orchestrator), `defillama.py`, `defillama_protocols.py` (catalog path), `etherscan.py`, `github.py`, `homepage_scrape.py`, `evm_factory_check.py`, `solana_wrapper_check.py`, `ottersec.py`, `bounty.py` (curated bounty registry) + `immunefi.py` (live Immunefi catalogue — address/name match) + `immunefi_catalog.py` (bounty-first discovery — seeds a candidate per active Immunefi program; see `immunefi-scan` mode) | `EnrichedCandidate` |
 | 3 | `audit_check/` | `checker.py` (orchestrator), `contests.py` (C4/Sherlock/Cantina via GitHub search), `score.py` | `AuditedCandidate` |
 | 4 | `rank/` | `priority.py` (formula), `report.py` (markdown + per-candidate YAML) | `CandidateRecord` |
 

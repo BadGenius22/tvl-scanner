@@ -370,6 +370,7 @@ def write_report(
     scan_date: date,
     *,
     reports_dir: Path | None = None,
+    label: str = "scan",
 ) -> tuple[Path, list[Path]]:
     """Write both the summary report and per-candidate files.
 
@@ -387,7 +388,7 @@ def write_report(
     s = settings()
     reports_dir = reports_dir or s.reports_path
     reports_dir.mkdir(parents=True, exist_ok=True)
-    scan_slug = f"{scan_date.isoformat()}-scan"
+    scan_slug = f"{scan_date.isoformat()}-{label}"
 
     # Purge stale per-candidate files from prior scans on the same date.
     out_dir = reports_dir / scan_slug

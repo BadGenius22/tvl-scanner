@@ -87,9 +87,13 @@ def parse_program(raw: dict[str, Any]) -> ImmunefiProgram | None:
     )
 
 
-async def fetch_programs(client: httpx.AsyncClient | None = None) -> list[ImmunefiProgram]:
-    """Fetch + parse the live Immunefi catalogue. Returns [] on any failure —
-    bounty enrichment is best-effort and must never abort a scan.
+async def fetch_raw(client: httpx.AsyncClient | None = None) -> list[dict[str, Any]]:
+    """Fetch the live Immunefi catalogue as raw program dicts. Returns [] on any
+    failure — every consumer here is best-effort and must never abort a scan.
+
+    This is the single fetch path for the catalogue. `fetch_programs` builds the
+    lean match index from it; the immunefi_catalog discovery builder consumes the
+    full dicts (ecosystem, assets, audits, launchDate) that the index drops.
     """
     try:
         data = await get_json(IMMUNEFI_BOUNTIES_URL, client=client)
@@ -100,8 +104,17 @@ async def fetch_programs(client: httpx.AsyncClient | None = None) -> list[Immune
     if not isinstance(rows, list):
         log.warning("immunefi catalogue: unexpected shape %s", type(data).__name__)
         return []
-    programs = [p for r in rows if isinstance(r, dict) and (p := parse_program(r)) is not None]
-    log.info("loaded %d immunefi programs (live catalogue)", len(programs))
+    return [r for r in rows if isinstance(r, dict)]
+
+
+async def fetch_programs(client: httpx.AsyncClient | None = None) -> list[ImmunefiProgram]:
+    """Fetch + parse the live Immunefi catalogue into the lean match index. Returns
+    [] on any failure — bounty enrichment is best-effort and must never abort a scan.
+    """
+    rows = await fetch_raw(client=client)
+    programs = [p for r in rows if (p := parse_program(r)) is not None]
+    if programs:
+        log.info("loaded %d immunefi programs (live catalogue)", len(programs))
     return programs
 
 

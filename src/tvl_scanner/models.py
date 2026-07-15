@@ -40,6 +40,7 @@ class DiscoverySource(StrEnum):
     GECKOTERMINAL = "geckoterminal"
     BIRDEYE = "birdeye"
     DEFILLAMA_CATALOG = "defillama_catalog"
+    IMMUNEFI_CATALOG = "immunefi_catalog"
     ALCHEMY_DEPLOYMENTS = "alchemy_deployments"
     RPC_ACTIVE_HOLDERS = "rpc_active_holders"
     FACTORY_EVENTS = "factory_events"
