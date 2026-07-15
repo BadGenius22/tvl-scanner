@@ -33,6 +33,27 @@ W_BOUNTY = 0.10
 # Priority cutoff for inclusion in the final report
 PRIORITY_CUTOFF = 5.0
 
+# Protocol-type tokens whose value depends on a price feed. Price-oracle
+# manipulation is the single most-exploited bug class in the DeFiHackLabs
+# corpus, so any candidate in one of these classes gets an oracle-focused
+# audit hint. Matched as substrings against the lowercased protocol_type
+# ("Lending on arbitrum", "Leveraged Farming on base", ...).
+_PRICE_SENSITIVE_TYPE_TOKENS: tuple[str, ...] = (
+    "lend",
+    "borrow",
+    "cdp",
+    "collateral",
+    "derivativ",
+    "perp",
+    "option",
+    "synthetic",
+    "yield",
+    "vault",
+    "leverage",
+    "money market",
+    "stablecoin",
+)
+
 
 def tvl_score(tvl_usd: float) -> float:
     """Log-scaled TVL score: $100K → 0, $1M → 5, $10M → 10, capped.
@@ -186,7 +207,9 @@ def _focus_areas(
         )
     if "vault" in edge_keywords:
         suggestions.append(
-            "Audit share/asset conversion math carefully; first-depositor share inflation is common in vault patterns"
+            "Audit share/asset conversion math (convertToAssets/convertToShares rounding) — "
+            "ERC4626 first-depositor and donation-based share inflation are recurrent "
+            "(e.g. Edel xStock, 2026)"
         )
     if any(k in edge_keywords for k in ("aave", "compound", "silo", "pendle")):
         suggestions.append(
@@ -195,6 +218,22 @@ def _focus_areas(
     if any(k in edge_keywords for k in ("zk", "noir", "anchor")):
         suggestions.append(
             "Solana-specific: verify account validation, PDA derivation, and Anchor constraint coverage"
+        )
+
+    # Oracle-manipulation hint — grounded in the DeFiHackLabs corpus, where
+    # price-oracle manipulation is the most-exploited bug class (270+ incidents)
+    # and dominates 2026 losses. Fire it for protocols whose solvency depends on
+    # a price feed. Placed after the more-specific edge hints so those keep their
+    # slots (the list is capped at 5), but ahead of the generic freshness/TVL
+    # hints since it points at the highest-probability failure surface.
+    is_price_sensitive = any(
+        tok in candidate.protocol_type.lower() for tok in _PRICE_SENSITIVE_TYPE_TOKENS
+    ) or any(k in edge_keywords for k in ("aave", "compound", "silo", "pendle", "leverage"))
+    if is_price_sensitive:
+        suggestions.append(
+            "Price-oracle manipulation is the most-exploited DeFi bug class (DeFiHackLabs) — "
+            "check spot-price vs TWAP reliance, reserve/balanceOf-derived valuation, "
+            "single-source feeds, and flashloan-amplified price moves"
         )
 
     # Freshness hint — measured against the scan date, not the wall clock,

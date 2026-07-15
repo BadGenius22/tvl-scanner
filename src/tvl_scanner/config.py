@@ -135,10 +135,13 @@ class Settings(BaseSettings):
     DELTA_WATCH_STATE_FILE: str = "delta_watch_state.json"
     DELTA_WATCH_CONCURRENCY: int = 5
     # A changed file is a "fund-exit path" if its path (case-insensitive)
-    # contains one of these substrings. Tuned from the omnipair delta where the
-    # security-relevant changes were exactly withdraw/remove_collateral/
-    # remove_liquidity/borrow/circuit-breaker files. These are the surfaces a
-    # new commit most plausibly turns into a permissionless-theft bug.
+    # contains one of these substrings. Originally tuned from the omnipair delta
+    # (withdraw/remove_collateral/remove_liquidity/borrow/circuit-breaker), then
+    # expanded against the DeFiHackLabs corpus (~845 reproduced on-chain
+    # exploits) so the delta-watch classifier covers the surfaces that are
+    # empirically attacked, not just the ones one protocol happened to name.
+    # Matching is path-token only (never file contents), so each token stays
+    # high-precision: it flags a changed file whose *name/dir* names the surface.
     FUND_PATH_KEYWORDS: list[str] = Field(
         default_factory=lambda: [
             "withdraw",
@@ -162,6 +165,36 @@ class Settings(BaseSettings):
             "bridge",
             "oracle",
             "price",
+            # --- Corpus-grounded additions (DeFiHackLabs) ---
+            # Staking / rewards: the Liquid-Staking + Staking-Pool categories had
+            # NO prior coverage, yet reward-accounting and getReward timing bugs
+            # are a recurring class.
+            "stake",
+            "reward",
+            "harvest",
+            # Signature / permit surfaces: EIP-2612 permit drains, signature
+            # replay, and ecrecover(0) bypasses recur across 2026 incidents
+            # (Lixir, Mure, TrustedVolumes).
+            "permit",
+            "signatur",
+            # Reentrancy entry points: the flashloan/callback receiver is where
+            # the reentrancy window opens (top-3 class); the `flashloan` root
+            # alone misses the callback contract.
+            "callback",
+            # Vault rate math: ERC4626 convertToAssets/convertToShares rounding
+            # and donation-based share inflation (Edel xStock, Vault4626, 2026).
+            "convert",
+            "rebalanc",
+            # Proxy / migration: uninitialized-proxy and storage-collision drains
+            # route through upgrade and migration paths.
+            "upgrade",
+            "migrat",
+            # Oracle sub-pattern: reserve-derived valuation is the single most
+            # common price-manipulation vector (getReserves / balanceOf pricing).
+            "reserve",
+            # Bridge / ZK: proof-forgery and settlement-mismatch drains
+            # (Aztec, VerusBridge).
+            "proof",
         ]
     )
 
