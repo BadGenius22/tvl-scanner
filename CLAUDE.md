@@ -74,7 +74,7 @@ The dedup step (`pipeline._dedupe_enriched`) prefers the DefiLlama catalog recor
 | Stage | Module dir | Key files | Output model |
 |-------|-----------|-----------|--------------|
 | 1 | `discover/` | `merge.py` (orchestrator), `geckoterminal.py`, `birdeye.py`, `alchemy.py`, `rpc.py` | `DiscoveredContract` |
-| 2 | `enrich/` | `enricher.py` (orchestrator), `defillama.py`, `defillama_protocols.py` (catalog path), `etherscan.py`, `github.py`, `homepage_scrape.py`, `evm_factory_check.py`, `solana_wrapper_check.py`, `ottersec.py` | `EnrichedCandidate` |
+| 2 | `enrich/` | `enricher.py` (orchestrator), `defillama.py`, `defillama_protocols.py` (catalog path), `etherscan.py`, `github.py`, `homepage_scrape.py`, `evm_factory_check.py`, `solana_wrapper_check.py`, `ottersec.py`, `bounty.py` (curated bounty registry) + `immunefi.py` (live Immunefi catalogue — address/name match) | `EnrichedCandidate` |
 | 3 | `audit_check/` | `checker.py` (orchestrator), `contests.py` (C4/Sherlock/Cantina via GitHub search), `score.py` | `AuditedCandidate` |
 | 4 | `rank/` | `priority.py` (formula), `report.py` (markdown + per-candidate YAML) | `CandidateRecord` |
 

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from tvl_scanner.config import settings
-from tvl_scanner.enrich import bounty, github_registry
+from tvl_scanner.enrich import bounty, github_registry, immunefi
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.etherscan import VerificationResult, check_verification
 from tvl_scanner.enrich.evm_bytecode_check import check_bytecode_match
@@ -140,6 +140,7 @@ async def enrich_one(
     catalog: DefiLlamaCatalog,
     *,
     client: Any = None,
+    immunefi_index: immunefi.ImmunefiIndex | None = None,
 ) -> EnrichedCandidate:
     """Enrich a single contract. See module docstring for field derivation."""
     dl_match = catalog.lookup(contract.protocol_guess or "") if contract.protocol_guess else None
@@ -393,6 +394,30 @@ async def enrich_one(
     bounty_url_raw = bounty_entry.url if bounty_entry else None
     bounty_payout = bounty_entry.max_payout_usd if bounty_entry else None
 
+    # Live Immunefi catalogue — fills bounty_program when the curated seeds file
+    # missed it (a fresh / unregistered program). Matches by in-scope contract
+    # ADDRESS (definitive) or protocol name. Only upgrades from "none" so the
+    # curated registry (with hand-tuned URLs) stays authoritative where it hit.
+    if bounty_program == "none" and immunefi_index is not None:
+        im_match = immunefi.match(
+            immunefi_index,
+            address=contract.address,
+            display_name=on_chain_name or _display_name(contract, dl_match),
+            defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
+            target_name=_target_slug(contract, dl_match),
+        )
+        if im_match is not None:
+            bounty_program = "immunefi"
+            bounty_url_raw = im_match.url
+            bounty_payout = im_match.max_payout_usd
+            log.info(
+                "live-immunefi bounty match: %s -> %s (by %s, max $%s)",
+                _target_slug(contract, dl_match),
+                im_match.slug,
+                im_match.reason,
+                im_match.max_payout_usd,
+            )
+
     return EnrichedCandidate(
         chain=contract.chain,
         address=contract.address,
@@ -437,12 +462,19 @@ async def enrich_all(
         catalog = DefiLlamaCatalog()
         await catalog.load(client=client)
 
+        # Fetch the live Immunefi catalogue once and index it, so every candidate
+        # is tagged with its REAL current bounty status (address- or name-matched)
+        # rather than only the curated seeds file. Best-effort: [] on failure.
+        immunefi_index = immunefi.build_index(await immunefi.fetch_programs(client=client))
+
         # Run GitHub lookups with bounded concurrency to stay under rate limits
         sem = asyncio.Semaphore(10)
 
         async def _bounded(c: DiscoveredContract) -> EnrichedCandidate:
             async with sem:
-                return await enrich_one(c, catalog, client=client)
+                return await enrich_one(
+                    c, catalog, client=client, immunefi_index=immunefi_index
+                )
 
         # return_exceptions=True so ONE candidate's failure (an unexpected upstream
         # response shape, a transport error that escaped the inner guards) drops

@@ -203,7 +203,9 @@ async def test_enrich_all_isolates_a_single_candidate_failure() -> None:
     good = _contract(guess="GoodProto", address="0x" + "1" * 40)
     bad = _contract(guess="BadProto", address="0x" + "2" * 40)
 
-    async def fake_enrich_one(contract: DiscoveredContract, catalog: object, *, client: object = None) -> EnrichedCandidate:
+    async def fake_enrich_one(
+        contract: DiscoveredContract, catalog: object, **_kw: object
+    ) -> EnrichedCandidate:
         if contract.protocol_guess == "BadProto":
             raise RuntimeError("simulated upstream failure")
         return _enriched("GoodProto", contract.address)
@@ -211,6 +213,7 @@ async def test_enrich_all_isolates_a_single_candidate_failure() -> None:
     with (
         patch("tvl_scanner.enrich.enricher.make_client", _fake_client),
         patch.object(DefiLlamaCatalog, "load", new=AsyncMock()),
+        patch("tvl_scanner.enrich.immunefi.fetch_programs", new=AsyncMock(return_value=[])),
         patch("tvl_scanner.enrich.enricher.enrich_one", side_effect=fake_enrich_one),
     ):
         results = await enrich_all([good, bad])
