@@ -1,0 +1,118 @@
+# Default candidate profile for job-scanner.
+#
+# This file defines what "suitable" means — every scoring dimension reads from
+# here. Copy it to `profile.yaml` at the repo root (gitignored) and edit that
+# copy; the root copy always wins over this packaged default. Or point
+# JOB_SCANNER_PROFILE_PATH (or `--profile`) at any path.
+#
+# The default is tuned for a blockchain-security / smart-contract-audit
+# profile, matching this repo's owner. Edit freely — matching is lowercase
+# and word-boundary aware ("rust" never matches "trust"), so keep tokens
+# short and distinctive.
+
+name: default
+
+# A title containing one of these is a strong "right kind of job" signal.
+# Also used as search queries on sources that support search (Remotive).
+role_keywords:
+  - security researcher
+  - security engineer
+  - smart contract
+  - blockchain security
+  - auditor
+  - protocol engineer
+  - solidity
+  - rust engineer
+
+skills:
+  # Core stack — each hit weighs heavily in skill matching.
+  core:
+    - solidity
+    - rust
+    - smart contract
+    - audit
+    - defi
+    - evm
+    - solana
+    - security
+    - blockchain
+  # Nice-to-have — small boost per hit.
+  bonus:
+    - foundry
+    - fuzzing
+    - formal verification
+    - static analysis
+    - zk
+    - cairo
+    - move
+    - python
+    - incident response
+    - bug bounty
+
+# Acceptable seniority markers (matched in the title). A title with none of
+# these scores neutral — many good postings omit seniority.
+seniority_levels:
+  - senior
+  - staff
+  - lead
+  - principal
+  - head
+
+# Hard dealbreakers — a title containing any of these is dropped before
+# scoring (counted in the report, never silently).
+exclude_keywords:
+  - intern
+  - internship
+  - junior
+  - working student
+  - unpaid
+
+location:
+  # true = onsite-only listings outside your location keywords are dropped.
+  remote_only: true
+  # Places/regions that work for you (matched against the listing's location
+  # text). "remote"/"worldwide"/"anywhere" are always treated as remote.
+  keywords:
+    - remote
+    - worldwide
+    - anywhere
+    - global
+    - asia
+    - apac
+    - indonesia
+    - singapore
+
+compensation:
+  # Annualized USD. Below min → near-0 score; at/above target → 10;
+  # unstated → neutral 5 (never a dealbreaker).
+  min_salary_usd: 60000
+  target_salary_usd: 150000
+
+# Benefits that matter to you, matched against description + tags.
+benefits_keywords:
+  - equity
+  - token
+  - health insurance
+  - flexible hours
+  - flexible schedule
+  - unlimited pto
+  - remote-first
+  - learning budget
+  - conference
+  - 4-day
+
+# Postings older than this many days score 0 freshness.
+max_age_days: 45
+
+# Company watchlist — pulled directly from the company's own board, so
+# openings never depend on aggregator coverage.
+# greenhouse: Greenhouse board tokens (the slug in boards.greenhouse.io/<token>)
+# lever: Lever company slugs (the slug in jobs.lever.co/<slug>)
+# The defaults below are security/web3 shops with live public boards
+# (verified 2026-07-22) — swap in your own dream companies.
+company_boards:
+  greenhouse:
+    - openzeppelin
+    - consensys
+  lever:
+    - certik

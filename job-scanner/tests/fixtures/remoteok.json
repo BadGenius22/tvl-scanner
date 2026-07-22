@@ -1,0 +1,32 @@
+[
+  {
+    "last_updated": 1753142400,
+    "legal": "API terms: linking back required. Do not resell."
+  },
+  {
+    "id": "555001",
+    "slug": "smart-contract-auditor-defi-collective",
+    "position": "Smart Contract Auditor",
+    "company": "DeFi Collective",
+    "tags": ["Solidity", "Security", "Web3"],
+    "location": "Worldwide",
+    "salary_min": 90000,
+    "salary_max": 140000,
+    "description": "<p>Review protocols before launch. Equity offered.</p>",
+    "date": "2026-07-21T08:00:00+00:00",
+    "url": "https://remoteok.com/remote-jobs/555001"
+  },
+  {
+    "id": "555002",
+    "slug": "backend-engineer-payments",
+    "position": "Backend Engineer",
+    "company": "PayCo",
+    "tags": ["Python"],
+    "location": "Remote (US only)",
+    "salary_min": 0,
+    "salary_max": 0,
+    "description": "<p>Build payment rails.</p>",
+    "date": "2026-07-15T00:00:00+00:00",
+    "url": "https://remoteok.com/remote-jobs/555002"
+  }
+]

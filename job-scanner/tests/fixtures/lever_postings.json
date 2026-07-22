@@ -1,0 +1,28 @@
+[
+  {
+    "id": "a1b2c3d4",
+    "text": "Senior Smart Contract Engineer",
+    "hostedUrl": "https://jobs.lever.co/vaultco/a1b2c3d4",
+    "createdAt": 1784419200000,
+    "workplaceType": "remote",
+    "categories": {
+      "location": "Remote",
+      "commitment": "Full-time",
+      "team": "Engineering"
+    },
+    "salaryRange": {"min": 130000, "max": 180000, "currency": "USD", "interval": "per-year-salary"},
+    "descriptionPlain": "Build and audit vault contracts in Solidity. Token grants and flexible hours."
+  },
+  {
+    "id": "e5f6a7b8",
+    "text": "Community Manager",
+    "hostedUrl": "https://jobs.lever.co/vaultco/e5f6a7b8",
+    "createdAt": 1783123200000,
+    "workplaceType": "onsite",
+    "categories": {
+      "location": "Lisbon, Portugal",
+      "commitment": "Full-time"
+    },
+    "descriptionPlain": "Run our Discord."
+  }
+]

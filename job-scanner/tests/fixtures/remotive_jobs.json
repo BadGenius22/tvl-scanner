@@ -1,0 +1,41 @@
+{
+  "job-count": 3,
+  "jobs": [
+    {
+      "id": 1001,
+      "url": "https://remotive.com/remote-jobs/software-dev/senior-security-researcher-1001",
+      "title": "Senior Security Researcher (Smart Contracts)",
+      "company_name": "ChainGuard Labs",
+      "candidate_required_location": "Worldwide",
+      "salary": "$120,000 - $150,000",
+      "tags": ["Solidity", "DeFi", "Audit"],
+      "job_type": "full_time",
+      "publication_date": "2026-07-20T12:33:07",
+      "description": "<p>Audit <strong>smart contracts</strong> in Solidity and Rust. Benefits: equity, unlimited PTO.</p>"
+    },
+    {
+      "id": 1002,
+      "url": "https://remotive.com/remote-jobs/marketing/growth-marketer-1002",
+      "title": "Growth Marketer",
+      "company_name": "AdTech Co",
+      "candidate_required_location": "USA Only",
+      "salary": "",
+      "tags": ["marketing"],
+      "job_type": "full_time",
+      "publication_date": "2026-07-19T09:00:00",
+      "description": "<p>Run campaigns.</p>"
+    },
+    {
+      "id": 1003,
+      "url": "https://remotive.com/remote-jobs/software-dev/rust-engineer-1003",
+      "title": "Rust Engineer, Protocol",
+      "company_name": "Solana Shop",
+      "candidate_required_location": "Asia",
+      "salary": null,
+      "tags": ["Rust", "Blockchain"],
+      "job_type": "contract",
+      "publication_date": "not-a-date",
+      "description": null
+    }
+  ]
+}

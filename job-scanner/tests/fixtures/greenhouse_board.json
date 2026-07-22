@@ -1,0 +1,21 @@
+{
+  "jobs": [
+    {
+      "id": 7001,
+      "absolute_url": "https://boards.greenhouse.io/chainguard/jobs/7001",
+      "title": "Staff Protocol Security Engineer",
+      "updated_at": "2026-07-18T10:00:00-04:00",
+      "location": {"name": "Remote - Worldwide"},
+      "content": "&lt;p&gt;Lead audits of &lt;strong&gt;smart contracts&lt;/strong&gt;. We offer equity and a learning budget.&lt;/p&gt;"
+    },
+    {
+      "id": 7002,
+      "absolute_url": "https://boards.greenhouse.io/chainguard/jobs/7002",
+      "title": "Recruiter",
+      "updated_at": "2026-07-10T10:00:00-04:00",
+      "location": {"name": "New York, NY"},
+      "content": "&lt;p&gt;Hire great people.&lt;/p&gt;"
+    }
+  ],
+  "meta": {"total": 2}
+}
