@@ -6,6 +6,7 @@ clock. Two knobs are zeroed here; retry *counts* are unchanged everywhere:
 
   - tenacity backoff in http.get_json (via HTTP_BACKOFF_SECONDS=0)
   - Etherscan free-tier throttle + NOTOK retry sleep (module constants)
+  - GitHub search pacing (via GITHUB_SEARCH_MIN_INTERVAL_SECONDS=0)
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ from tvl_scanner.config import settings
 from tvl_scanner.enrich import etherscan
 
 os.environ.setdefault("HTTP_BACKOFF_SECONDS", "0")
+os.environ.setdefault("GITHUB_SEARCH_MIN_INTERVAL_SECONDS", "0")
 settings.cache_clear()
 
 

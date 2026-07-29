@@ -126,6 +126,12 @@ class Settings(BaseSettings):
     HTTP_MAX_RETRIES: int = 3
     HTTP_BACKOFF_SECONDS: float = 2.0
 
+    # GitHub's search endpoints allow 30 req/min for an authenticated user,
+    # separate from the 5000/hr core budget. Minimum spacing between search
+    # calls; 2.1s leaves headroom against clock skew at the bucket boundary.
+    # Set to 0.0 in tests to disable pacing.
+    GITHUB_SEARCH_MIN_INTERVAL_SECONDS: float = 2.1
+
     # Logging
     LOG_LEVEL: str = "INFO"
 

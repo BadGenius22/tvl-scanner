@@ -50,6 +50,27 @@ RETRYABLE = (
 )
 
 
+def is_rate_limited(response: httpx.Response) -> bool:
+    """True when a 403 is really a rate-limit rejection rather than a auth failure.
+
+    GitHub reports both search (30/min) and secondary rate limits as 403, not 429.
+    Treating those as fatal silently zeroes the audit signal for every candidate
+    after the bucket drains, which reads as "no audits found" in the report.
+    """
+    if response.status_code == 429:
+        # 429 is unambiguous: always back off and retry.
+        return True
+    if response.status_code != 403:
+        return False
+    # A 403 is overloaded — it covers both rate limits and auth failures, and
+    # only the former is worth retrying. Require positive evidence.
+    if response.headers.get("x-ratelimit-remaining") == "0":
+        return True
+    if "retry-after" in response.headers:
+        return True
+    return "rate limit" in response.text.lower()
+
+
 async def get_json(
     url: str,
     *,
@@ -86,9 +107,8 @@ async def get_json(
         ):
             with attempt:
                 response = await client.get(url, params=params, headers=headers)
-                if response.status_code == 429:
-                    # Rate-limited. Retry with backoff.
-                    raise httpx.ReadTimeout("429 rate limited")
+                if is_rate_limited(response):
+                    raise httpx.ReadTimeout(f"{response.status_code} rate limited")
                 if response.status_code >= 500:
                     raise httpx.ReadTimeout(f"upstream {response.status_code}")
                 response.raise_for_status()
@@ -132,8 +152,8 @@ async def post_json(
         ):
             with attempt:
                 response = await client.post(url, json=json_body, headers=headers)
-                if response.status_code == 429:
-                    raise httpx.ReadTimeout("429 rate limited")
+                if is_rate_limited(response):
+                    raise httpx.ReadTimeout(f"{response.status_code} rate limited")
                 if response.status_code >= 500:
                     raise httpx.ReadTimeout(f"upstream {response.status_code}")
                 response.raise_for_status()

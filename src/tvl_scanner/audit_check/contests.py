@@ -11,8 +11,12 @@ the three canonical audit-org accounts:
 GitHub repository search endpoint:
     GET /search/repositories?q=<query>+org:<org>
 
-Authenticated rate limit is 30 requests/minute for search endpoints, which is
-well within our budget (3 searches × ~50 candidates = 150/run).
+Authenticated search endpoints allow 30 requests/minute (a separate bucket from
+the 5000/hr core budget). A full immunefi-scan needs ~200 distinct (token, org)
+searches even after de-duplication, so the budget is NOT ample — calls are paced
+by `_throttle_search` below to stay under the ceiling. Firing them unpaced drains
+the bucket in seconds and GitHub answers 403 for the remainder, which the caller
+cannot distinguish from "this protocol has no contest history".
 
 A hit in any of these orgs = strong audit history signal. Weight: 3 points per
 hit (per the plan), since contests are the highest-quality audit signal.
@@ -42,6 +46,27 @@ AUDIT_ORGS: dict[AuditSourceKind, str] = {
 
 
 _CLEAN_NAME = re.compile(r"[^A-Za-z0-9]+")
+
+_search_gate = asyncio.Lock()
+_next_search_at: float = 0.0
+
+
+async def _throttle_search() -> None:
+    """Serialize search calls so they land no faster than the GitHub search limit.
+
+    The lock is held across the sleep, so concurrent callers queue rather than
+    all waking at the same deadline.
+    """
+    global _next_search_at
+    interval = settings().GITHUB_SEARCH_MIN_INTERVAL_SECONDS
+    if interval <= 0:
+        return
+    async with _search_gate:
+        loop = asyncio.get_running_loop()
+        delay = _next_search_at - loop.time()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        _next_search_at = loop.time() + interval
 
 
 def _normalize_query(name: str) -> str:
@@ -104,12 +129,16 @@ async def search_org(
     }
     url = f"{s.GITHUB_API_BASE}/search/repositories"
 
+    await _throttle_search()
     try:
         payload = await get_json(
             url, params=params, headers=_auth_headers(), client=client
         )
     except HttpError as exc:
-        log.info("contest search failed for %s/%s: %s", org, query_token, exc)
+        # A failure here is indistinguishable from a genuine no-hit at the call
+        # site, so log at warning: silently returning [] understates audit
+        # coverage and inflates a candidate's audit-gap score.
+        log.warning("contest search failed for %s/%s: %s", org, query_token, exc)
         return []
 
     items = payload.get("items", []) if isinstance(payload, dict) else []
