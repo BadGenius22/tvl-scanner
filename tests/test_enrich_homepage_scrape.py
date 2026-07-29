@@ -13,6 +13,7 @@ from tvl_scanner.enrich.homepage_scrape import (
     _registered_domain,
     _slugify_display_name,
     derive_candidate_urls,
+    github_url_matches_protocol,
     scrape_homepage,
     scrape_homepage_with_fallback,
 )
@@ -502,3 +503,40 @@ async def test_phase3_skipped_when_phase1_empty_html(
     )
     assert result.fetched is False
     assert result.audit_firm_matches == []
+
+
+# ── github_url_matches_protocol — audit-attribution ownership guard ──────────
+
+
+def test_github_url_matches_protocol_accepts_own_repo() -> None:
+    assert github_url_matches_protocol(
+        "https://github.com/autonomoussoftware/metronome-synth-audit",
+        slug="metronome",
+        display_name="Metronome",
+    )
+
+
+def test_github_url_matches_protocol_rejects_upstream_vendor_repo() -> None:
+    """Regression: KAST's Immunefi entry declares M^0's repo as its githubUrl.
+
+    Crediting the `audits/` folder there cleared KAST's under-audited flag and
+    dropped the only genuinely-unaudited target out of the report entirely.
+    """
+    assert not github_url_matches_protocol(
+        "https://github.com/m0-foundation/solana-m-extensions",
+        slug="KAST",
+        display_name="KAST",
+    )
+
+
+def test_github_url_matches_protocol_needs_identity_tokens() -> None:
+    """No usable tokens → refuse to attribute rather than guess."""
+    assert not github_url_matches_protocol(
+        "https://github.com/someone/somerepo", slug=None, display_name=None
+    )
+
+
+def test_github_url_matches_protocol_rejects_non_github_url() -> None:
+    assert not github_url_matches_protocol(
+        "https://example.com/audits", slug="example", display_name="Example"
+    )

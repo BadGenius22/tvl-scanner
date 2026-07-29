@@ -307,3 +307,37 @@ def test_compute_score_defillama_count_one_does_not_override() -> None:
     result = compute_score(candidate)
     # Score=1, threshold=2 → still under_audited, override does NOT trigger
     assert result.under_audited is True
+
+
+def test_bounty_scope_audit_clears_under_audited() -> None:
+    """A program citing its own prior audit is audited, whatever else scores.
+
+    Regression: Derive, Metronome and SPOT each linked an audit report in their
+    Immunefi program text yet scored audit_density_score=0, because the only
+    audit sources Stage 3 consulted were DefiLlama and the C4/Sherlock/Cantina
+    contest orgs — none of which see PDF-publishing firms.
+    """
+    candidate = _with_updates(
+        _enriched(),
+        precomputed_audit_sources=[
+            AuditSource(
+                source=AuditSourceKind.BOUNTY_SCOPE_AUDIT,
+                url="https://github.com/sigp/public-audits/blob/master/lyra-finance/review-round2.pdf",
+                title="Audit report cited in bounty scope (sigp)",
+                weight=2,
+            )
+        ],
+    )
+
+    scored = compute_score(candidate)
+
+    assert scored.under_audited is False
+    assert scored.audit_density_score >= 2
+
+
+def test_no_scope_audit_leaves_candidate_under_audited() -> None:
+    """The override must not fire for a candidate with genuinely no evidence."""
+    scored = compute_score(_enriched())
+
+    assert scored.under_audited is True
+    assert scored.audit_density_score <= UNDER_AUDITED_THRESHOLD

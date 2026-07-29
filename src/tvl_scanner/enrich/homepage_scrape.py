@@ -349,6 +349,45 @@ async def scrape_homepage(
     return result
 
 
+def _identity_tokens(slug: str | None, display_name: str | None) -> set[str]:
+    """Meaningful name tokens for a protocol, for matching against repo paths."""
+    tokens: set[str] = set()
+    for source in (slug, display_name):
+        if not source:
+            continue
+        for t in re.split(r"[^a-z0-9]+", source.lower()):
+            if len(t) >= 3 and t not in _DISPLAY_NAME_SUFFIXES:
+                tokens.add(t)
+    return tokens
+
+
+def github_url_matches_protocol(
+    url: str | None, *, slug: str | None = None, display_name: str | None = None
+) -> bool:
+    """True when a GitHub URL plausibly belongs to the named protocol.
+
+    Guards audit attribution. A bounty program's declared `githubUrl` is often
+    an upstream dependency rather than the team's own code — KAST's Immunefi
+    entry points at `m0-foundation/solana-m-extensions` — and an `audits/`
+    folder there is evidence about the upstream, not about the protocol
+    deploying it. Crediting it silently clears the very candidates a hunter
+    most wants to see.
+
+    Deliberately conservative: with no usable identity tokens, or no overlap,
+    the answer is False. A false negative leaves a candidate flagged for manual
+    review; a false positive hides it entirely.
+    """
+    tokens = _identity_tokens(slug, display_name)
+    if not tokens:
+        return False
+    match = re.search(r"github\.com/([^/]+)/([^/?#]+)", url or "", re.I)
+    if not match:
+        return False
+    owner = match.group(1).lower()
+    repo = match.group(2).lower().removesuffix(".git")
+    return any(tok in owner or tok in repo for tok in tokens)
+
+
 def rank_github_urls_for_protocol(
     urls: list[str], *, slug: str | None = None, display_name: str | None = None
 ) -> list[str]:
@@ -359,15 +398,7 @@ def rank_github_urls_for_protocol(
     calling enrich_repo() — saves GitHub API calls by trying the most
     likely match first.
     """
-    tokens: set[str] = set()
-    if slug:
-        for t in re.split(r"[^a-z0-9]+", slug.lower()):
-            if len(t) >= 3 and t not in _DISPLAY_NAME_SUFFIXES:
-                tokens.add(t)
-    if display_name:
-        for t in re.split(r"[^a-z0-9]+", display_name.lower()):
-            if len(t) >= 3 and t not in _DISPLAY_NAME_SUFFIXES:
-                tokens.add(t)
+    tokens = _identity_tokens(slug, display_name)
 
     def score(url: str) -> int:
         match = re.search(r"github\.com/([^/]+)/([^/?#]+)", url, re.I)

@@ -24,6 +24,7 @@ silently dropped.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections import defaultdict
 from datetime import date, timedelta
@@ -35,7 +36,15 @@ from tvl_scanner.enrich import immunefi
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
 from tvl_scanner.enrich.defillama_protocols import CHAIN_DEFAULT_LANG
 from tvl_scanner.enrich.etherscan import fetch_creation_dates_batch
+from tvl_scanner.enrich.github import enrich_repo
+from tvl_scanner.enrich.homepage_scrape import (
+    github_url_matches_protocol,
+    scrape_homepage_with_fallback,
+)
+from tvl_scanner.enrich.scope_audits import extract_scope_audit_sources
 from tvl_scanner.models import (
+    AuditSource,
+    AuditSourceKind,
     Chain,
     DiscoverySource,
     EnrichedCandidate,
@@ -250,6 +259,7 @@ def _build_candidate(
     dl_slug: str | None = None
     dl_count: int | None = None
     dl_links: list[str] = []
+    dl_url: str | None = None
     if dl:
         raw_tvl = dl.get("tvl")
         tvl = float(raw_tvl) if isinstance(raw_tvl, (int, float)) and raw_tvl > 0 else 0.0
@@ -257,6 +267,8 @@ def _build_candidate(
         dl_slug = str(dl["slug"]) if dl.get("slug") else None
         dl_count = _dl_audit_count(dl.get("audits"))
         dl_links = [u for u in (dl.get("audit_links") or []) if isinstance(u, str) and u.startswith("http")]
+        raw_url = dl.get("url")
+        dl_url = raw_url if isinstance(raw_url, str) and raw_url.startswith("http") else None
 
     im_count, im_urls, im_note = _audit_signal(program)
 
@@ -292,7 +304,10 @@ def _build_candidate(
         languages=_languages(program, chain),
         github_repo=github_repo,
         loc_estimate=None,
-        docs_url=None,
+        # DefiLlama's protocol homepage. Doubles as the phase-1 seed for the
+        # homepage audit scrape below — Immunefi's own `websiteUrl` is null for
+        # most programs, so this is the only URL we get for free.
+        docs_url=dl_url,
         bounty_program="immunefi",
         bounty_url=f"https://immunefi.com/bug-bounty/{slug}",
         bounty_max_payout_usd=max_bounty,
@@ -301,6 +316,12 @@ def _build_candidate(
         defillama_audit_count=audit_count,
         defillama_audit_note=note,
         onchain_address=onchain_address,
+        # Audit reports the program itself cites as out-of-scope prior work.
+        # The structured `audits` array covers only ~30% of programs; this
+        # prose signal covers ~64% and is the only one that sees PDF-publishing
+        # firms (Sigma Prime, ChainSecurity, PeckShield) which no contest
+        # search can reach.
+        precomputed_audit_sources=extract_scope_audit_sources(program),
     )
 
 
@@ -340,6 +361,119 @@ async def _resolve_deploy_dates(
         "immunefi catalog: resolved TRUE deploy date for %d/%d candidates with EVM addresses",
         resolved,
         total,
+    )
+
+
+def _has_audit_evidence(cand: EnrichedCandidate) -> bool:
+    """True when we already know this candidate is audited.
+
+    Used to bound the cost of the two network-backed passes below: they only
+    run for candidates that would otherwise score zero, which is exactly the
+    population whose `under_audited` flag is at risk of being a false positive.
+    """
+    return bool(cand.precomputed_audit_sources) or bool(cand.defillama_audit_count)
+
+
+async def _resolve_github_audit_folders(
+    results: list[EnrichedCandidate], client: httpx.AsyncClient | None
+) -> None:
+    """Populate the `audits/` folder signal for candidates that name a repo.
+
+    ~30% of Immunefi programs publish a `githubUrl`, and teams that keep audit
+    PDFs in-repo (Metronome, Ampleforth) are invisible to every other source.
+    Mutates in place.
+    """
+    targets: list[EnrichedCandidate] = []
+    disowned = 0
+    for cand in results:
+        if not cand.github_repo or _has_audit_evidence(cand):
+            continue
+        if not github_url_matches_protocol(
+            str(cand.github_repo),
+            slug=cand.defillama_slug or cand.target_name,
+            display_name=cand.display_name,
+        ):
+            # Upstream/vendor repo, not the team's own — its audits say nothing
+            # about this protocol's in-scope code.
+            disowned += 1
+            continue
+        targets.append(cand)
+
+    if disowned:
+        log.info(
+            "immunefi catalog: %d candidate(s) declare a repo that is not theirs — "
+            "audits/ folder not credited",
+            disowned,
+        )
+    if not targets:
+        return
+
+    sem = asyncio.Semaphore(4)
+
+    async def _one(cand: EnrichedCandidate) -> bool:
+        async with sem:
+            try:
+                meta = await enrich_repo(cand.github_repo, client=client)
+            except Exception as exc:
+                log.debug("audits-folder check failed for %s: %s", cand.target_name, exc)
+                return False
+        if not meta or not meta.audits_folder_exists:
+            return False
+        cand.github_audits_folder_exists = True
+        cand.github_audit_report_count = meta.audit_report_count
+        return True
+
+    found = sum(await asyncio.gather(*(_one(c) for c in targets)))
+    log.info(
+        "immunefi catalog: audits/ folder found for %d/%d candidates with a repo",
+        found,
+        len(targets),
+    )
+
+
+async def _resolve_homepage_audits(
+    results: list[EnrichedCandidate], client: httpx.AsyncClient | None
+) -> None:
+    """Last-resort audit signal: scrape the protocol's own site for firm names.
+
+    Runs only for candidates with no audit evidence from any cheaper source.
+    `max_attempts` is kept low because this is the most fragile source (SPAs,
+    bot blocking) and it runs against the long tail. Mutates in place.
+    """
+    targets = [c for c in results if not _has_audit_evidence(c)]
+    if not targets:
+        return
+
+    sem = asyncio.Semaphore(4)
+
+    async def _one(cand: EnrichedCandidate) -> bool:
+        async with sem:
+            try:
+                result = await scrape_homepage_with_fallback(
+                    cand.docs_url, cand.display_name, client=client, max_attempts=4
+                )
+            except Exception as exc:
+                log.debug("homepage scrape failed for %s: %s", cand.target_name, exc)
+                return False
+        if not result.audit_firm_matches:
+            return False
+        page = result.url if result.url.startswith("http") else cand.docs_url
+        cand.precomputed_audit_sources.extend(
+            AuditSource(
+                source=AuditSourceKind.HOMEPAGE_SCRAPE,
+                url=page,
+                title=f"{firm} audit cited on protocol homepage",
+                weight=4,
+            )
+            for firm in result.audit_firm_matches
+        )
+        return True
+
+    found = sum(await asyncio.gather(*(_one(c) for c in targets)))
+    log.info(
+        "immunefi catalog: homepage audit citations found for %d/%d zero-evidence candidates",
+        found,
+        len(targets),
     )
 
 
@@ -389,6 +523,14 @@ async def discover_from_immunefi_catalog(
         results.append(cand)
 
     await _resolve_deploy_dates(results, client)
+    scope_hits = sum(1 for c in results if c.precomputed_audit_sources)
+    log.info(
+        "immunefi catalog: %d/%d candidates cite an audit report in their bounty scope",
+        scope_hits,
+        len(results),
+    )
+    await _resolve_github_audit_folders(results, client)
+    await _resolve_homepage_audits(results, client)
 
     log.info(
         "immunefi catalog discovery: %d candidates from %d programs "

@@ -22,6 +22,7 @@ def _enriched(
     *,
     defillama_audit_count: int | None = None,
     defillama_slug: str | None = "test-protocol",
+    precomputed_audit_sources: list[AuditSource] | None = None,
 ) -> EnrichedCandidate:
     return EnrichedCandidate(
         chain=Chain.ARBITRUM,
@@ -35,6 +36,7 @@ def _enriched(
         languages=[Language.SOLIDITY],
         defillama_slug=defillama_slug,
         defillama_audit_count=defillama_audit_count,
+        precomputed_audit_sources=precomputed_audit_sources or [],
     )
 
 
@@ -126,3 +128,40 @@ async def test_check_all_isolates_a_single_candidate_failure() -> None:
 
     assert len(results) == 1
     assert results[0].defillama_slug == "good"
+
+
+async def test_check_one_skips_github_when_scope_audit_already_found() -> None:
+    """Prose-cited audits settle `under_audited` on their own, so re-confirming
+    them via three GitHub searches only burns the 30/min search budget."""
+    candidate = _enriched(
+        defillama_audit_count=0,
+        precomputed_audit_sources=[
+            AuditSource(
+                source=AuditSourceKind.BOUNTY_SCOPE_AUDIT,
+                url="https://github.com/sigp/public-audits/lyra.pdf",
+                title="Audit report cited in bounty scope (sigp)",
+                weight=2,
+            )
+        ],
+    )
+
+    with patch(
+        "tvl_scanner.audit_check.checker.check_all_contests",
+        new=AsyncMock(return_value=[]),
+    ) as mock_contests:
+        result = await check_one(candidate)
+        mock_contests.assert_not_called()
+
+    assert result.under_audited is False
+
+
+async def test_check_one_runs_github_when_no_evidence_at_all() -> None:
+    """The skip must not swallow the genuinely-unknown case."""
+    candidate = _enriched(defillama_audit_count=0, precomputed_audit_sources=[])
+
+    with patch(
+        "tvl_scanner.audit_check.checker.check_all_contests",
+        new=AsyncMock(return_value=[]),
+    ) as mock_contests:
+        await check_one(candidate)
+        mock_contests.assert_called_once()

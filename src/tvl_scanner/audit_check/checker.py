@@ -41,19 +41,23 @@ async def check_one(
 ) -> AuditedCandidate:
     """Run audit-history checks on a single candidate.
 
-    BATCH H fix #2: skip GitHub contest search entirely for candidates where
-    DefiLlama already reports a non-zero audit count. Stage 3's real purpose
-    is to find audit history that DefiLlama missed; when DefiLlama already
-    has the data, spending three API calls per org to re-confirm is wasted
-    work AND it saturates GitHub search's 30-req-per-minute rate limit which
-    caused 403s on late candidates in v0.3.0. Net effect: Stage 3 now does
-    ~80% fewer GitHub calls and no longer hits rate limits.
+    BATCH H fix #2: skip the GitHub contest search entirely for candidates we
+    already know are audited. Stage 3's real purpose is to find audit history
+    the cheaper sources missed; re-confirming it costs three API calls per
+    candidate against GitHub search's 30-req-per-minute budget, which is what
+    caused 403s on late candidates in v0.3.0.
+
+    "Already known" means either DefiLlama reports a non-zero audit count, or
+    Stage 2 attached a precomputed source — a bounty-scope audit citation,
+    homepage firm mention, wrapper or factory attribution. Both settle the
+    `under_audited` question on their own (see the definitive-override paths
+    in compute_score), so a contest hit could only pad audit_density_score.
     """
-    has_defillama_audits = (
+    has_known_audits = (
         candidate.defillama_audit_count is not None
         and candidate.defillama_audit_count > 0
-    )
-    if has_defillama_audits:
+    ) or bool(candidate.precomputed_audit_sources)
+    if has_known_audits:
         contest_sources: list[AuditSource] = []
     else:
         contest_sources = await check_all_contests(

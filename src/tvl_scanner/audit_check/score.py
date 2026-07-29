@@ -195,6 +195,7 @@ KNOWN_AUDITED_SLUG_PREFIXES: tuple[str, ...] = (
 CAPS: dict[AuditSourceKind, int] = {
     AuditSourceKind.DEFILLAMA: 3,
     AuditSourceKind.GITHUB_AUDITS_FOLDER: 3,
+    AuditSourceKind.BOUNTY_SCOPE_AUDIT: 3,
 }
 
 # Any candidate at or below this score is flagged as under-audited
@@ -411,13 +412,17 @@ def compute_score(
     # call or slug-prefix match) attribute audits via the upstream protocol;
     # HOMEPAGE_SCRAPE picks up self-hosted audit firm citations;
     # PARENT_PROTOCOL inherits a sibling's audit signal within the same
-    # DefiLlama parentProtocol group (multi-product team pattern).
+    # DefiLlama parentProtocol group (multi-product team pattern);
+    # BOUNTY_SCOPE_AUDIT is the program's own citation of a prior audit whose
+    # findings it declares out of scope — self-reported, but the program has
+    # every incentive to be accurate since it narrows what it must pay for.
     for src in all_sources:
         if src.source in (
             AuditSourceKind.WRAPPER_PROGRAM,
             AuditSourceKind.HOMEPAGE_SCRAPE,
             AuditSourceKind.FACTORY_ATTRIBUTION,
             AuditSourceKind.PARENT_PROTOCOL,
+            AuditSourceKind.BOUNTY_SCOPE_AUDIT,
         ):
             under_audited = False
             break
