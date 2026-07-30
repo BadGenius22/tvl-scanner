@@ -54,6 +54,34 @@ def _parse_exclude_slugs(text: str) -> set[str]:
     return slugs
 
 
+def _resolve_exclude_slugs(exclude: str | None, exclude_slugs_file: str | None) -> set[str]:
+    """Union inline `--exclude` slugs with those from `--exclude-slugs-file`.
+
+    Inline tokens are slugified the same way `_parse_exclude_slugs` does, so
+    `--exclude "Aave V3,onre"` matches the `aave-v3` / `onre` target_name the
+    ranked report renders. Passing both flags is additive, not either/or.
+    """
+    import re
+
+    slugs: set[str] = set()
+    if exclude:
+        for token in exclude.split(","):
+            slug = re.sub(r"[^a-z0-9]+", "-", token.lower()).strip("-")
+            if slug:
+                slugs.add(slug)
+    if exclude_slugs_file:
+        from pathlib import Path
+
+        path = Path(exclude_slugs_file).expanduser()
+        if not path.is_file():
+            console.print(f"[red]exclude-slugs-file not found: {path}[/]")
+            raise typer.Exit(code=1)
+        file_slugs = _parse_exclude_slugs(path.read_text())
+        console.print(f"[yellow]Excluding {len(file_slugs)} slug(s) from {path.name}[/]")
+        slugs |= file_slugs
+    return slugs
+
+
 def _setup_logging(level: str) -> None:
     logging.basicConfig(
         level=level,
@@ -83,6 +111,12 @@ def run(
     ),
     cutoff: float = typer.Option(5.0, "--cutoff", help="Priority cutoff for inclusion in report."),
     cap: int = typer.Option(50, "--cap", help="Maximum candidates in report."),
+    exclude: str | None = typer.Option(
+        None,
+        "--exclude",
+        help="Comma-separated slugs to drop from the ranked output "
+        "(e.g. --exclude twyne,onre,gmtrade). Additive with --exclude-slugs-file.",
+    ),
     exclude_slugs_file: str | None = typer.Option(
         None,
         "--exclude-slugs-file",
@@ -106,15 +140,7 @@ def run(
     else:
         chain_list = [Chain(c) for c in s.chain_list]
 
-    exclude_slugs: set[str] = set()
-    if exclude_slugs_file:
-        from pathlib import Path
-        path = Path(exclude_slugs_file).expanduser()
-        if not path.is_file():
-            console.print(f"[red]exclude-slugs-file not found: {path}[/]")
-            raise typer.Exit(code=1)
-        exclude_slugs = _parse_exclude_slugs(path.read_text())
-        console.print(f"[yellow]Excluding {len(exclude_slugs)} slug(s) from {path.name}[/]")
+    exclude_slugs = _resolve_exclude_slugs(exclude, exclude_slugs_file)
 
     console.print(
         f"[bold cyan]tvl-scanner {__version__}[/]  "
@@ -151,6 +177,19 @@ def immunefi_scan(
     ),
     cutoff: float = typer.Option(5.0, "--cutoff", help="Priority cutoff for inclusion in report."),
     cap: int = typer.Option(60, "--cap", help="Maximum candidates in report."),
+    exclude: str | None = typer.Option(
+        None,
+        "--exclude",
+        help="Comma-separated slugs to drop from the ranked output "
+        "(e.g. --exclude twyne,onre,gmtrade). Use for programs already audited or "
+        "gate-checked to a dead end, so they stop resurfacing every scan. "
+        "Additive with --exclude-slugs-file.",
+    ),
+    exclude_slugs_file: str | None = typer.Option(
+        None,
+        "--exclude-slugs-file",
+        help="Path to a file with one slug per line (or one slug per markdown table row).",
+    ),
     log_level: str = typer.Option("INFO", "--log-level", help="Python logging level."),
 ) -> None:
     """Rank the FULL live Immunefi bounty catalogue by the priority formula.
@@ -173,12 +212,15 @@ def immunefi_scan(
         chain_list = None  # None → all supported chains
     _ = s  # settings loaded (validates .env) even though thresholds aren't overridden here
 
+    exclude_slugs = _resolve_exclude_slugs(exclude, exclude_slugs_file)
+
     console.print(
         f"[bold cyan]tvl-scanner {__version__}[/]  immunefi-scan  "
         f"chains={'all' if chain_list is None else ', '.join(c.value for c in chain_list)}  "
         f"{'no-kyc  ' if no_kyc else ''}"
         f"{f'min_bounty=${min_bounty:,}  ' if min_bounty else ''}"
         f"cutoff={cutoff}  cap={cap}"
+        f"{f'  exclude={len(exclude_slugs)}' if exclude_slugs else ''}"
     )
     summary = asyncio.run(
         run_immunefi_scan(
@@ -187,6 +229,7 @@ def immunefi_scan(
             cap=cap,
             kyc=False if no_kyc else None,
             min_bounty=min_bounty,
+            exclude_slugs=exclude_slugs or None,
         )
     )
     console.print(f"\n[bold green]✓ Immunefi-scan report written:[/] {summary}")
