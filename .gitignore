@@ -10,6 +10,11 @@ artifacts/*
 reports/*
 !artifacts/.gitkeep
 !reports/.gitkeep
+# Hand-written triage (not scanner output) is tracked; generated scans stay ignored.
+# The directory rule is required — git will not descend into an ignored directory,
+# so re-including the per-candidate records needs the parent un-ignored first.
+!reports/*-triage.md
+!reports/*-triage/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
