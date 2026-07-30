@@ -220,3 +220,63 @@
   bounty_program: immunefi
   bounty_max_payout_usd: 250000
   extra_keywords: [vault, router, withdrawrequest, strategy, oracle]
+
+# ---- Added 2026-07-17 from the 1inch Immunefi triage. ----
+#
+# NOTE ON THE TRIGGER: unlike every target above, these two are NOT waiting on a
+# fresh commit delta — the delta is already large and unaudited. They are waiting
+# on MAINNET DEPLOYMENT. 1inch's own rewards body states "As Aqua is not yet
+# deployed on mainnet with actual user funds, all severity levels have a base
+# reward amount" (Critical base $20k, up to $100k at 1inch's sole discretion) and
+# "Once Aqua is deployed to mainnet with live user funds, this section will be
+# reviewed and updated to reflect production reward amounts." So the real tripwire
+# is: watch for a mainnet deploy, THEN re-read the program's reward terms. Commit
+# churn here is a proxy signal (deploy scripts / broadcast/ landing), not the gate.
+#
+# Why they're worth watching at all: this is the only genuinely un-picked-over
+# 1inch surface. The sibling $500k "1inch - Smart Contracts" program gated out on
+# 2026-07-17 (all 8 assets carry 8-15 published audits; the entire post-audit
+# delta is deploy automation + dep bumps, and the Solana repos' newest logic
+# commits are literally the `audit/*` fix branches). Aqua/Swap VM have NO entry in
+# github.com/1inch/1inch-audits and are novel: an opcode-dispatch swap VM with
+# transient storage, MakerTraits/TakerTraits, PeggedSwapMath, XYCConcentrate.
+#
+# Program: https://immunefi.com/bug-bounty/1inch-aqua/information/ (KYC required,
+# Primacy of RULES — scope is file-enumerated, not repo-wide; see per-entry notes).
+
+- slug: 1inch-aqua
+  display_name: 1inch Aqua
+  github: https://github.com/1inch/aqua
+  chains: [ethereum]
+  languages: [solidity]
+  # In-scope files (Primacy of Rules — only these count): src/*.sol and
+  # src/libs/Balances.sol. Repo created 2025-10-27, still actively pushed.
+  # Baseline = HEAD at triage time so the watcher reports only NEW code.
+  branch: main
+  audited_at_commit: 7a5972a6b562
+  audited_at_date: 2026-07-17
+  bounty_program: immunefi
+  bounty_max_payout_usd: 100000
+  extra_keywords: [balances, aqua, invest, settle]
+
+- slug: 1inch-swap-vm
+  display_name: 1inch Swap VM
+  github: https://github.com/1inch/swap-vm
+  chains: [ethereum]
+  languages: [solidity]
+  # In-scope files (Primacy of Rules): src/*.sol, src/routers/AquaSwapVMRouter.sol,
+  # src/opcodes/AquaOpcodes.sol, src/instructions/{Balances,Controls,Decay,
+  # Extruction,Fee,PeggedSwap,XYCConcentrate,XYCSwap}.sol, src/libs/{MakerTraits,
+  # PeggedSwapMath,TakerTraits,VM}.sol.
+  # EXPLICITLY OUT OF SCOPE: src/strategies/AquaAMM.sol — findings there are
+  # ineligible regardless of impact. Also out of scope: github.com/1inch/sdks.
+  # The program additionally scopes 6 solidity-utils files (Calldata, CalldataPtr,
+  # Transient, TransientLock, Simulator, Multicall) — NOT watched here because
+  # solidity-utils is a high-churn shared lib and would drown the signal; check it
+  # by hand if the VM's transient-storage paths become the audit target.
+  branch: main
+  audited_at_commit: 19b4d6b9d682
+  audited_at_date: 2026-07-13
+  bounty_program: immunefi
+  bounty_max_payout_usd: 100000
+  extra_keywords: [opcode, instruction, router, swap, decay, fee, traits, vm]
