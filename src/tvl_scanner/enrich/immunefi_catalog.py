@@ -41,6 +41,7 @@ from tvl_scanner.enrich.homepage_scrape import (
     github_url_matches_protocol,
     scrape_homepage_with_fallback,
 )
+from tvl_scanner.enrich.onchain_tvl import measure_onchain_tvl
 from tvl_scanner.enrich.scope_audits import extract_scope_audit_sources
 from tvl_scanner.models import (
     AuditSource,
@@ -157,6 +158,36 @@ def _pick_scope(
     return chain_seen, None, count
 
 
+
+def _scope_addresses(program: dict[str, Any], chain: Chain) -> list[str]:
+    """Every in-scope EVM address on `chain`, deduped, order preserved.
+
+    `_pick_scope` returns ONE representative address (it only needs a deploy
+    date). TVL needs the whole set: Pareto Credit spreads $224M across five
+    separate credit vaults, so measuring only the first would undercount it by
+    ~95%.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for asset in program.get("assets") or []:
+        if not isinstance(asset, dict) or asset.get("type") != "smart_contract":
+            continue
+        url = str(asset.get("url") or "")
+        if not url or "immunefi.com" in url or _is_testnet(url):
+            continue
+        if _chain_from_explorer(url) is not chain:
+            continue
+        m = immunefi._ADDR_RE.search(url)
+        if not m:
+            continue
+        addr = m.group(0)
+        if addr.lower() in seen:
+            continue
+        seen.add(addr.lower())
+        out.append(addr)
+    return out
+
+
 def _ecosystem_chain(program: dict[str, Any], configured: set[Chain]) -> Chain | None:
     for raw in program.get("ecosystem") or []:
         chain = _ECOSYSTEM_CHAINS.get(str(raw).strip().lower())
@@ -260,9 +291,16 @@ def _build_candidate(
     dl_count: int | None = None
     dl_links: list[str] = []
     dl_url: str | None = None
+    # Unresolved until DefiLlama actually yields a number. Both failure modes —
+    # no name-match at all, and a match whose `tvl` is null — used to land on a
+    # bare 0.0 that the report then printed as a confident "$0".
+    tvl_resolved = False
     if dl:
         raw_tvl = dl.get("tvl")
-        tvl = float(raw_tvl) if isinstance(raw_tvl, (int, float)) and raw_tvl > 0 else 0.0
+        if isinstance(raw_tvl, (int, float)) and raw_tvl > 0:
+            tvl, tvl_resolved = float(raw_tvl), True
+        else:
+            tvl = 0.0
         category = str(dl["category"]) if dl.get("category") else None
         dl_slug = str(dl["slug"]) if dl.get("slug") else None
         dl_count = _dl_audit_count(dl.get("audits"))
@@ -295,6 +333,7 @@ def _build_candidate(
         chain=chain,
         address=address,
         tvl_usd=tvl,
+        tvl_resolved=tvl_resolved,
         first_seen=_launch_date(program, scan_date),
         unique_users_30d=None,
         source=DiscoverySource.IMMUNEFI_CATALOG,
@@ -503,6 +542,50 @@ async def _resolve_homepage_audits(
     )
 
 
+
+async def _resolve_onchain_tvl(
+    results: list[EnrichedCandidate],
+    scope_map: dict[str, list[str]],
+    client: httpx.AsyncClient | None,
+) -> None:
+    """Measure TVL on-chain for candidates DefiLlama could not resolve.
+
+    Runs only where `tvl_resolved` is False, so a working DefiLlama figure is
+    never overridden — this is a fallback, not a replacement. Mutates in place.
+    """
+    targets = [c for c in results if not c.tvl_resolved and c.chain is not Chain.SOLANA]
+    if not targets:
+        return
+
+    sem = asyncio.Semaphore(4)
+
+    async def _one(cand: EnrichedCandidate) -> bool:
+        addresses = scope_map.get(cand.target_name) or []
+        if not addresses:
+            return False
+        async with sem:
+            try:
+                measured = await measure_onchain_tvl(cand.chain, addresses, client=client)
+            except Exception as exc:
+                log.debug("on-chain TVL failed for %s: %s", cand.target_name, exc)
+                return False
+        if measured is None:
+            return False
+        cand.tvl_usd, cand.tvl_resolved = measured[0], True
+        note = f"TVL measured {measured[1]}"
+        cand.defillama_audit_note = (
+            f"{cand.defillama_audit_note} | {note}" if cand.defillama_audit_note else note
+        )
+        return True
+
+    found = sum(await asyncio.gather(*(_one(c) for c in targets)))
+    log.info(
+        "immunefi catalog: on-chain TVL resolved for %d/%d candidates DefiLlama missed",
+        found,
+        len(targets),
+    )
+
+
 async def discover_from_immunefi_catalog(
     *,
     chains: list[Chain] | None = None,
@@ -532,6 +615,7 @@ async def discover_from_immunefi_catalog(
         await catalog.load(client=client)
 
     results: list[EnrichedCandidate] = []
+    scope_map: dict[str, list[str]] = {}
     skipped_chain = 0
     for program in programs:
         try:
@@ -547,6 +631,7 @@ async def discover_from_immunefi_catalog(
                 skipped_chain += 1
             continue
         results.append(cand)
+        scope_map[cand.target_name] = _scope_addresses(program, cand.chain)
 
     await _resolve_deploy_dates(results, client)
     scope_hits = sum(1 for c in results if c.precomputed_audit_sources)
@@ -557,6 +642,7 @@ async def discover_from_immunefi_catalog(
     )
     await _resolve_github_audit_folders(results, client)
     await _resolve_homepage_audits(results, client)
+    await _resolve_onchain_tvl(results, scope_map, client)
 
     log.info(
         "immunefi catalog discovery: %d candidates from %d programs "

@@ -103,7 +103,7 @@ def _summary_table(candidates: list[CandidateRecord]) -> str:
                 rank=i,
                 name=c.display_name[:40],
                 chain=c.chain.value,
-                tvl=_fmt_tvl(c.tvl_usd),
+                tvl=_fmt_tvl(c.tvl_usd) if c.tvl_resolved else "?",
                 age=_fmt_age(c.age_days),
                 loc=_fmt_loc(c.loc_estimate),
                 audits=audits_cell,
@@ -145,7 +145,13 @@ def _summary_usage() -> str:
         "2. Click the `→` link on any row to open the full per-candidate record.\n"
         "3. When you want to audit one, invoke the vault Phase 2a handoff via Claude Code "
         "(see header above for the exact trigger phrase).\n"
-        "4. Skip candidates with `audit_density_score > 2` unless they are a re-audit of code changes since their last review.\n"
+        "4. **`TVL` column**: `?` means UNRESOLVED — DefiLlama had no usable figure, so the protocol may still hold real value. Never read it as a measured $0; verify on-chain.\n"
+        "5. **`Audits` column**: a number is a resolved count, `—` means checked-and-none-found, "
+        "and **`?` means UNRESOLVED** — no audit source was consultable, so the count is unknown, "
+        "NOT zero. Protocols that publish audits only on their own docs site read as `?`; verify "
+        "manually before believing an audit gap. Unresolved candidates get a neutral audit-gap "
+        "score, so they are neither rewarded nor punished by the ranking.\n"
+        "6. Skip candidates with `audit_density_score > 2` unless they are a re-audit of code changes since their last review.\n"
     )
 
 
@@ -160,7 +166,15 @@ def _candidate_body(candidate: CandidateRecord) -> str:
     lines.append("")
     lines.append(f"- **Chain**: {candidate.chain.value}")
     lines.append(f"- **Primary contract**: `{candidate.primary_contract}`")
-    lines.append(f"- **TVL**: {_fmt_tvl(candidate.tvl_usd)} ({int(candidate.tvl_usd):,})")
+    if candidate.tvl_resolved:
+        lines.append(f"- **TVL**: {_fmt_tvl(candidate.tvl_usd)} ({int(candidate.tvl_usd):,})")
+    else:
+        lines.append(
+            "- **TVL: UNRESOLVED** — DefiLlama has no usable figure for this protocol "
+            "(no name-match, or it is listed with a null tvl). This is NOT a measured "
+            "$0; the protocol may hold substantial value. Measure the in-scope "
+            "contracts on-chain before judging whether it is worth auditing."
+        )
     lines.append(f"- **Age**: {_fmt_age(candidate.age_days)} (first seen {candidate.first_seen.isoformat()})")
     if candidate.unique_users_30d is not None:
         lines.append(f"- **Unique users 30d**: {candidate.unique_users_30d:,}")
@@ -341,6 +355,8 @@ def _frontmatter_dict(candidate: CandidateRecord) -> dict[str, Any]:
         "bounty_max_payout_usd": candidate.bounty_max_payout_usd,
         # --- Scanner metadata (not lifted but useful) ---
         "tvl_usd": candidate.tvl_usd,
+        # False = unmeasured; tvl_usd is a 0.0 placeholder, not a real zero.
+        "tvl_resolved": candidate.tvl_resolved,
         "first_seen": candidate.first_seen.isoformat(),
         "age_days": candidate.age_days,
         "unique_users_30d": candidate.unique_users_30d,

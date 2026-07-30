@@ -104,6 +104,18 @@ class EnrichedCandidate(BaseModel):
     chain: Chain
     address: str
     tvl_usd: float
+    tvl_resolved: bool = Field(
+        default=True,
+        description=(
+            "False when TVL could not be measured, so `tvl_usd` is 0.0 as a "
+            "placeholder meaning UNKNOWN, not a measured zero. Happens when the "
+            "DefiLlama name-match fails or DefiLlama carries the protocol with a "
+            "null tvl. KAST reads 0.0 here — DefiLlama lists it as 'Kast Card' "
+            "with tvl=null — while its two in-scope Solana programs are live and "
+            "hold real value. Reporting a hard $0 for an unmeasured protocol is "
+            "a false statement, so render it as unknown and score it neutrally."
+        ),
+    )
     first_seen: date
     unique_users_30d: int | None = None
     source: DiscoverySource

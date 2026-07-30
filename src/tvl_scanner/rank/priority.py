@@ -55,12 +55,20 @@ _PRICE_SENSITIVE_TYPE_TOKENS: tuple[str, ...] = (
 )
 
 
-def tvl_score(tvl_usd: float) -> float:
+def tvl_score(tvl_usd: float, resolved: bool = True) -> float:
     """Log-scaled TVL score: $100K → 0, $1M → 5, $10M → 10, capped.
 
     Below $100K returns 0 (shouldn't happen — those are filtered in Stage 1).
     Above $10M stays at 10 since a bigger TVL doesn't make a bug more valuable.
+
+    `resolved=False` means TVL could not be measured, so `tvl_usd` is a 0.0
+    placeholder for UNKNOWN. Returns a neutral 5.0 — same convention as
+    activity_score(None) and audit_gap_score(resolved=False). Scoring an
+    unmeasured protocol as 0 silently buries everything DefiLlama does not
+    track, which is disproportionately the fresh, less-indexed surface.
     """
+    if not resolved:
+        return 5.0
     if tvl_usd <= 0:
         return 0.0
     log_tvl = math.log10(tvl_usd)
@@ -154,7 +162,11 @@ def _why_interesting(
     """Auto-generate the one-sentence summary shown in the report table."""
     parts: list[str] = []
     parts.append(f"{candidate.protocol_type}")
-    parts.append(f"${int(candidate.tvl_usd):,} TVL")
+    parts.append(
+        f"${int(candidate.tvl_usd):,} TVL"
+        if candidate.tvl_resolved
+        else "TVL unresolved (not a measured $0 — verify on-chain)"
+    )
     parts.append(f"{age_days}d old")
     if candidate.loc_estimate:
         parts.append(f"~{candidate.loc_estimate} LOC")
@@ -279,9 +291,12 @@ def rank_candidate(candidate: AuditedCandidate, *, scan_date: date) -> Candidate
     s = settings()
     age_days = max(0, (scan_date - candidate.first_seen).days)
 
-    tvl_s = tvl_score(candidate.tvl_usd)
+    tvl_s = tvl_score(candidate.tvl_usd, resolved=candidate.tvl_resolved)
     fresh_s = freshness_score(age_days, s.MAX_AGE_DAYS)
-    audit_gap_s = audit_gap_score(candidate.audit_density_score)
+    audit_gap_s = audit_gap_score(
+        candidate.audit_density_score,
+        resolved=candidate.audit_record_resolved,
+    )
     activity_s = activity_score(candidate.unique_users_30d)
     edge_s, edge_keywords = edge_match_score(candidate)
     bounty_s = bounty_score(candidate)

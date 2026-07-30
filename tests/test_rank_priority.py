@@ -229,3 +229,18 @@ def test_audit_gap_unresolved_is_neutral_not_maximum() -> None:
     assert audit_gap_score(0, resolved=False) < audit_gap_score(0, resolved=True)
     # Default stays backward-compatible.
     assert audit_gap_score(0) == 10.0
+
+
+def test_tvl_unresolved_is_neutral_not_zero() -> None:
+    """Unmeasured TVL must not be scored as a measured $0.
+
+    Regression guard for KAST: DefiLlama lists it as "Kast Card" with a null
+    tvl, so the name-match failed and the report printed a confident "$0" for a
+    protocol whose in-scope Solana programs are live and hold real value.
+    """
+    from tvl_scanner.rank.priority import tvl_score
+
+    assert tvl_score(0.0, resolved=True) == 0.0    # genuinely empty
+    assert tvl_score(0.0, resolved=False) == 5.0   # unknown → neutral
+    assert tvl_score(10_000_000.0, resolved=True) == 10.0
+    assert tvl_score(0.0) == 0.0                   # default unchanged
