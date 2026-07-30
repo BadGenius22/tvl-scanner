@@ -114,7 +114,8 @@ AUDIT_FIRM_PHRASES: dict[re.Pattern[str], str] = {
     re.compile(r"\bhalborn\b", re.I): "halborn",
     re.compile(r"\bzellic\b", re.I): "zellic",
     re.compile(r"\bzokyo\b", re.I): "zokyo",
-    re.compile(r"\boxor\b", re.I): "oxor",
+    # "oxor" alone is a fragment; require the firm's actual name or domain.
+    re.compile(r"\boxorio\b|oxor\.io", re.I): "oxor",
     re.compile(r"\bottersec\b", re.I): "ottersec",
     re.compile(r"\bchainsecurity\b", re.I): "chain_security",
     re.compile(r"\bopenzeppelin\b", re.I): "openzeppelin",
@@ -128,7 +129,12 @@ AUDIT_FIRM_PHRASES: dict[re.Pattern[str], str] = {
     re.compile(r"\bpeckshield\b", re.I): "peckshield",
     re.compile(r"\bslowmist\b", re.I): "slowmist",
     re.compile(r"\bconsensys diligence\b", re.I): "consensys_diligence",
-    re.compile(r"\bmacro\b", re.I): "macro",
+    # The firm is 0xMacro. Bare "macro" is an ordinary technical word — it
+    # appears in any docs page discussing macros, and combined with the
+    # (correctly) plural-tolerant AUDIT_CONTEXT_PATTERN a documentation-tooling
+    # page titled "Audits" that mentions "macro definitions" would register a
+    # fabricated audit. Require the brand, not the word.
+    re.compile(r"\b0xmacro\b|\bmacro audits?\b|macro\.xyz", re.I): "macro",
     re.compile(r"\bcode4rena\b", re.I): "code4rena",
     re.compile(r"\bsherlock\b", re.I): "sherlock",
     # Added 2026-05-26 after rho-x-lp-vault false positive — these firms

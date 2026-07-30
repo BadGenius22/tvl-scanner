@@ -607,3 +607,33 @@ def test_wrong_base_url_still_reaches_slug_guess() -> None:
 
     urls = derive_candidate_urls("SoDEX Bridge", "https://ssi.sosovalue.com/share/x/abc")
     assert "https://sodex.com/security" in urls[:8], urls[:10]
+
+
+def test_generic_words_do_not_register_as_audit_firms() -> None:
+    """Firm tokens must be brand names, not ordinary technical words.
+
+    Regression guard found by probing a Livepeer docs page whose "Audits"
+    section is documentation tooling (link health, WCAG), not security review.
+    No firm matched there, but it exposed a latent false positive: the firm
+    0xMacro was matched as bare `\\bmacro\\b`. Once AUDIT_CONTEXT_PATTERN
+    correctly accepted the plural "Audits", any docs page mentioning "macro"
+    would have reported a fabricated audit.
+    """
+    from tvl_scanner.enrich.homepage_scrape import (
+        AUDIT_CONTEXT_PATTERN,
+        AUDIT_FIRM_PHRASES,
+    )
+
+    def firms(html: str) -> set[str]:
+        return {tag for pat, tag in AUDIT_FIRM_PHRASES.items() if pat.search(html)}
+
+    decoy = "<h1>Documentation Audits</h1><p>Scripts expand macro definitions.</p>"
+    assert AUDIT_CONTEXT_PATTERN.search(decoy), "gate should still accept the plural"
+    assert firms(decoy) == set(), "generic words must not count as an audit firm"
+
+    # The real brand must still resolve, in each form it appears in the wild.
+    assert "macro" in firms("audited by 0xMacro")
+    assert "macro" in firms("see the Macro Audits report")
+    assert "oxor" in firms("reviewed by Oxorio")
+    assert "oxor" in firms("https://audits.oxor.io/reports/42")
+    assert firms("a bare oxor fragment") == set()
