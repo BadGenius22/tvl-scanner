@@ -364,14 +364,38 @@ async def _resolve_deploy_dates(
     )
 
 
+# A DefiLlama count at or below this is treated as too weak to suppress the
+# docs/homepage scrape. DefiLlama's `audits` field systematically understates:
+# Pareto Credit reads 2 there while publishing 14 reports on its own docs site,
+# GMTrade read 2 against 9, NUVA 3 against 7. Since the under_audited threshold
+# is 2 and audit_gap carries 0.30 of the priority score, accuracy matters most
+# exactly in this band — so we spend a fetch to check rather than trust it.
+WEAK_DL_AUDIT_COUNT = 3
+
+
 def _has_audit_evidence(cand: EnrichedCandidate) -> bool:
     """True when we already know this candidate is audited.
 
-    Used to bound the cost of the two network-backed passes below: they only
-    run for candidates that would otherwise score zero, which is exactly the
+    Used to bound the cost of the network-backed GitHub `audits/` pass: it only
+    runs for candidates that would otherwise score zero, which is exactly the
     population whose `under_audited` flag is at risk of being a false positive.
     """
     return bool(cand.precomputed_audit_sources) or bool(cand.defillama_audit_count)
+
+
+def _has_strong_audit_evidence(cand: EnrichedCandidate) -> bool:
+    """True only when a source that NAMES actual reports vouches for this.
+
+    A precomputed source is a real citation — a report URL in the bounty prose,
+    a GitHub `audits/` folder, a contest hit. A bare DefiLlama integer is not:
+    it is an aggregator's summary that is frequently far below the truth, so on
+    its own it must NOT suppress the docs scrape. Treating it as sufficient is
+    what hid Pareto Credit's 14 audits and floated it to rank 2 of a live scan.
+    """
+    if cand.precomputed_audit_sources:
+        return True
+    count = cand.defillama_audit_count
+    return count is not None and count > WEAK_DL_AUDIT_COUNT
 
 
 async def _resolve_github_audit_folders(
@@ -440,7 +464,9 @@ async def _resolve_homepage_audits(
     `max_attempts` is kept low because this is the most fragile source (SPAs,
     bot blocking) and it runs against the long tail. Mutates in place.
     """
-    targets = [c for c in results if not _has_audit_evidence(c)]
+    # Gated on STRONG evidence, not any evidence: a low DefiLlama count is the
+    # case this pass exists to correct, so it must not be the reason to skip.
+    targets = [c for c in results if not _has_strong_audit_evidence(c)]
     if not targets:
         return
 

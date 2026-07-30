@@ -61,8 +61,17 @@ WRAPPER_PHRASES: dict[re.Pattern[str], str] = {
 # Risk of false positive on bare firm names is minimal — these names are
 # uncommon outside audit context (Halborn, Zellic, Spearbit, etc.).
 
+# NOTE the plural/inflected forms. The original pattern was
+# `\b(audit|audited|...)\b`, and `\baudit\b` does NOT match "audits" — so a page
+# TITLED "Audits" that never used the singular failed this gate and every firm
+# name on it was discarded. That is not a corner case: "Audits" is the single
+# most common word on an audit index page. Pareto Credit's page uses the word 33
+# times, all plural, and named Sherlock 18 times; it scored zero audits and rode
+# a maximum audit-gap bonus to rank 2 of a live scan.
 AUDIT_CONTEXT_PATTERN = re.compile(
-    r"\b(audit|audited|security review|security assessment|reviewed by)\b", re.I
+    r"\b(audits?|audited|auditing|auditor|auditors"
+    r"|security reviews?|security assessments?|reviewed by)\b",
+    re.I,
 )
 
 # GitHub URL extraction — pulled from page HTML when DefiLlama and the
@@ -540,6 +549,34 @@ def derive_candidate_urls(
     if base_url and isinstance(base_url, str) and base_url.startswith("http"):
         add(base_url)
 
+    # 1b. docs.<the protocol's OWN domain> + high-signal audit paths.
+    # Deliberately ahead of every slug guess: the domain we were handed is
+    # evidence, `<slug>.com` is speculation, and the two diverge whenever the
+    # brand name is not the domain. Pareto Credit is the reference case — its
+    # docs live at `docs.pareto.credit`, but the display name slugifies to
+    # `paretocredit`, so the old ordering spent its whole budget on
+    # `pareto.com/...` guesses and reached `docs.pareto.credit` only at index
+    # 24. Callers pass max_attempts as low as 4, so anything past ~index 4 is
+    # effectively unreachable.
+    if base_url and isinstance(base_url, str) and base_url.startswith("http"):
+        try:
+            _p = urlparse(base_url)
+            if _p.scheme and _p.netloc:
+                _netloc = _p.netloc.lower()
+                _parts = _netloc.split(".")
+                if len(_parts) >= 3 and _parts[0] in ("www", "app", "docs"):
+                    _netloc = ".".join(_parts[1:])
+                # Just the docs ROOT — one slot, no path guessing. The Phase 3
+                # depth-2 link-crawl walks from here to the real audits page,
+                # so guessing paths would only burn budget. Keeping this to a
+                # single URL matters: when the base_url is WRONG (DefiLlama
+                # sometimes returns an unrelated invite link) the slug guess in
+                # step 2 is the one that saves us, and it must stay reachable
+                # within a max_attempts as low as 4.
+                add(f"{_p.scheme}://docs.{_netloc}")
+        except (ValueError, AttributeError):
+            pass
+
     # 2. Slug × .com × audit paths (highest-signal derived candidates)
     slug = _slugify_display_name(display_name or "")
     if slug:
@@ -602,6 +639,21 @@ def derive_candidate_urls(
                 add(root_base)
                 for path in _AUDIT_PATHS:
                     add(root_base + path)
+
+                # docs./app. on the protocol's OWN registered domain. Step 2b
+                # only builds these from the display-name slug, which fails
+                # whenever the slug and the domain differ: "Pareto Credit"
+                # slugifies to `paretocredit`, so `docs.paretocredit.com` gets
+                # probed while the real docs site `docs.pareto.credit` never
+                # does. The domain we were handed is far better evidence than a
+                # name guess, so derive from it too.
+                for subdomain in ("docs", "app"):
+                    if root_netloc.startswith(f"{subdomain}."):
+                        continue
+                    sub_base = f"{parsed.scheme}://{subdomain}.{root_netloc}"
+                    add(sub_base)
+                    for path in ("/security", "/security/audits", "/audits"):
+                        add(sub_base + path)
         except (ValueError, AttributeError):
             pass
 
@@ -739,18 +791,36 @@ async def _follow_audit_links(
     *,
     client: httpx.AsyncClient | None,
     max_visits: int = 3,
+    depth: int = 2,
+    _seen: set[str] | None = None,
 ) -> HomepageScrapeResult:
-    """Visit the top audit-relevant links from base_html; return first useful hit."""
+    """Visit the top audit-relevant links from base_html; return first useful hit.
+
+    Recurses up to `depth` hops because docs sites routinely put the audit list
+    two levels down behind a section index. Pareto Credit is the reference case:
+    `docs.pareto.credit` links only to `/developers/security`, that page names no
+    firm at all, and the reports live one hop further at
+    `/developers/security/audits`. A depth-1 crawl reaches the silent middle page
+    and concludes the protocol is unaudited — it has 14 published reports.
+
+    Fan-out narrows as depth increases (max_visits halves, min 2) so the worst
+    case stays a handful of fetches per candidate, and `_seen` prevents revisits.
+    """
     candidate_links = _extract_audit_relevant_links(base_html, base_url)
     if not candidate_links:
         return _EMPTY
 
+    seen = _seen if _seen is not None else {base_url}
     best = _EMPTY
     for link in candidate_links[:max_visits]:
-        result = await scrape_homepage(link, client=client)
+        if link in seen:
+            continue
+        seen.add(link)
+        result, html = await _fetch_and_extract(link, client=client)
         if result.fetched and (result.audit_firm_matches or result.wrapper_matches):
             log.info(
-                "homepage_scrape L link-crawl: %s → audit=%s wrapper=%s",
+                "homepage_scrape L link-crawl (depth %d): %s → audit=%s wrapper=%s",
+                depth,
                 link,
                 result.audit_firm_matches,
                 result.wrapper_matches,
@@ -758,6 +828,18 @@ async def _follow_audit_links(
             return result
         if result.fetched and not best.fetched:
             best = result
+        # Silent intermediate page — follow its own audit links one hop deeper.
+        if depth > 1 and result.fetched and html:
+            deeper = await _follow_audit_links(
+                result.url or link,
+                html,
+                client=client,
+                max_visits=max(2, max_visits // 2),
+                depth=depth - 1,
+                _seen=seen,
+            )
+            if deeper.fetched and (deeper.audit_firm_matches or deeper.wrapper_matches):
+                return deeper
     return best
 
 
@@ -801,12 +883,23 @@ async def scrape_homepage_with_fallback(
         derived = [u for u in derived if u != base_url]
 
     best_result = primary
+    # Keep the best HTML Phase 2 fetches so Phase 3 can link-crawl it. Without
+    # this, a derived docs URL that fetches fine but names no firm on its index
+    # page is a dead end: its HTML was discarded and only the root page ever got
+    # crawled. Pareto Credit's docs_url is the ROOT `pareto.credit`, so
+    # `docs.pareto.credit` is only ever reached here in Phase 2 — and the audit
+    # list is two hops below it.
+    crawl_targets: list[tuple[str, str]] = []
+    if primary_html:
+        crawl_targets.append(((primary.url or base_url or ""), primary_html))
     attempts_made = 1
     for candidate in derived:
         if attempts_made >= max_attempts:
             break
         attempts_made += 1
-        result = await scrape_homepage(candidate, client=client)
+        result, html = await _fetch_and_extract(candidate, client=client)
+        if result.fetched and html and len(crawl_targets) < 3:
+            crawl_targets.append((result.url or candidate, html))
         if result.fetched and (result.wrapper_matches or result.audit_firm_matches):
             log.info(
                 "homepage_scrape K2 fallback: derived URL %s succeeded for %r "
@@ -824,10 +917,12 @@ async def scrape_homepage_with_fallback(
     # Independent of the max_attempts budget — Phase 3 only fires when the
     # homepage actually produced HTML and the cheaper phases came up empty,
     # and it's bounded internally to 3 visits (one HTTP each).
-    if primary.fetched and primary_html:
+    # Crawls every page that yielded HTML (root + up to 2 derived docs pages),
+    # not just the root — see the crawl_targets comment in Phase 2.
+    for crawl_url, crawl_html in crawl_targets:
         crawl_result = await _follow_audit_links(
-            primary.url or base_url or "",
-            primary_html,
+            crawl_url,
+            crawl_html,
             client=client,
             max_visits=3,
         )

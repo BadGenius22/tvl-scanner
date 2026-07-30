@@ -211,3 +211,21 @@ def test_focus_areas_vault_hint_cites_erc4626_donation() -> None:
     result = rank_candidate(c, scan_date=date(2026, 4, 13))
     joined = " ".join(result.focus_areas_suggested).lower()
     assert "erc4626" in joined or "donation" in joined
+
+
+def test_audit_gap_unresolved_is_neutral_not_maximum() -> None:
+    """An unresolved audit record must score neutral, never a maximum gap.
+
+    Regression guard for the Pareto Credit false positive: 14 audits published
+    only on its own docs site scored 0, took the full 10.0 audit-gap bonus
+    (weight 0.30) and surfaced at rank 2 of a live scan.
+    """
+    from tvl_scanner.rank.priority import audit_gap_score
+
+    assert audit_gap_score(0, resolved=True) == 10.0   # checked, genuinely none
+    assert audit_gap_score(0, resolved=False) == 5.0   # unknown → neutral
+    assert audit_gap_score(5, resolved=True) == 0.0
+    # Unresolved never beats a genuine zero-audit finding.
+    assert audit_gap_score(0, resolved=False) < audit_gap_score(0, resolved=True)
+    # Default stays backward-compatible.
+    assert audit_gap_score(0) == 10.0

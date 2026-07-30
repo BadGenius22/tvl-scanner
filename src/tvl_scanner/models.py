@@ -165,6 +165,17 @@ class AuditedCandidate(EnrichedCandidate):
     audit_density_score: int = Field(..., ge=0)
     audit_sources_found: list[AuditSource] = Field(default_factory=list)
     under_audited: bool = Field(..., description="True if audit_density_score <= 2")
+    audit_record_resolved: bool = Field(
+        default=True,
+        description=(
+            "False when NO audit source could be consulted at all — no DefiLlama "
+            "audit field, no GitHub repo to inspect, and no audit URL cited in the "
+            "bounty prose. A score of 0 then means 'unknown', NOT 'zero audits'. "
+            "Ranking must treat unresolved as neutral, never as maximum audit gap: "
+            "Pareto Credit scored 0 here while actually carrying 14 audits published "
+            "only on its own docs site, and that inflated it to rank 2 of a scan."
+        ),
+    )
 
 
 class CandidateRecord(AuditedCandidate):

@@ -396,6 +396,24 @@ def compute_score(
     total_score = sum(src.weight for src in all_sources)
     under_audited = total_score <= UNDER_AUDITED_THRESHOLD
 
+    # Was ANY audit source actually consultable? A zero score means two very
+    # different things and the ranking used to conflate them:
+    #   (a) we checked and the protocol really has no audits   → genuine gap
+    #   (b) we had nothing to check                            → unknown
+    # Case (b) happens when DefiLlama carries no audit field, there is no
+    # GitHub repo to inspect, and the bounty prose cites no audit URL. Pareto
+    # Credit hit exactly this: 14 real audits, all published only on its own
+    # docs site, scored 0 and rode a maximum audit-gap bonus to rank 2.
+    audit_record_resolved = bool(
+        all_sources
+        or candidate.defillama_audit_count is not None
+        or candidate.github_repo
+    )
+    if not audit_record_resolved:
+        # Never claim "under-audited" on no evidence — that is the assertion
+        # that produced the false positive.
+        under_audited = False
+
     # Definitive-override: DefiLlama-reported audit count ≥ 2 wins over
     # any weaker aggregated signal. Catches protocols whose underlying
     # audits exist but aren't all visible to GitHub contest search.
@@ -432,4 +450,5 @@ def compute_score(
         audit_density_score=total_score,
         audit_sources_found=all_sources,
         under_audited=under_audited,
+        audit_record_resolved=audit_record_resolved,
     )

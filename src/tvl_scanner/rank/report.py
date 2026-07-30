@@ -86,11 +86,16 @@ def _summary_table(candidates: list[CandidateRecord]) -> str:
     )
     for i, c in enumerate(candidates, start=1):
         record_link = f"[→](./{{scan_slug}}/candidates/{i:02d}-{c.target_name}.md)"
-        audits_cell = (
-            f"{c.audit_density_score}"
-            if c.audit_density_score > 0
-            else "—"
-        )
+        # "?" = no audit source was consultable, so the count is UNKNOWN.
+        # "—" = we checked and found nothing. Printing "—" for both used to
+        # read as "zero audits" for protocols whose audits are simply
+        # published somewhere the scanner cannot see (own docs site).
+        if not c.audit_record_resolved:
+            audits_cell = "?"
+        elif c.audit_density_score > 0:
+            audits_cell = f"{c.audit_density_score}"
+        else:
+            audits_cell = "—"
         under_cell = "✓" if c.under_audited else ""
         bounty_cell = c.bounty_program if c.bounty_program != "none" else "—"
         lines.append(
@@ -232,8 +237,16 @@ def _candidate_body(candidate: CandidateRecord) -> str:
 
     lines.append("## Audit history")
     lines.append("")
+    if not candidate.audit_record_resolved:
+        lines.append(
+            "- **Audit record: UNRESOLVED** — no audit source was consultable "
+            "(no DefiLlama audit field, no GitHub repo, no audit URL cited in the "
+            "bounty prose). The density score below is *unknown*, not zero. Many "
+            "protocols publish audits only on their own docs site, which this "
+            "scanner cannot see. **Verify manually before treating as a gap.**"
+        )
     lines.append(f"- **Audit density score**: {candidate.audit_density_score} "
-                 f"({'under-audited' if candidate.under_audited else 'already audited'})")
+                 f"({'unknown — see above' if not candidate.audit_record_resolved else 'under-audited' if candidate.under_audited else 'already audited'})")
     if candidate.defillama_audit_count is not None:
         lines.append(
             f"- **DefiLlama audit count**: {candidate.defillama_audit_count} "
@@ -242,7 +255,11 @@ def _candidate_body(candidate: CandidateRecord) -> str:
     if candidate.defillama_audit_note:
         lines.append(f"- **DefiLlama audit note**: *{candidate.defillama_audit_note}*")
     if not candidate.audit_sources_found:
-        lines.append("- **No audits found** in any checked source.")
+        lines.append(
+            "- **Audit record unresolved** — nothing to check, see caveat above."
+            if not candidate.audit_record_resolved
+            else "- **No audits found** in any checked source."
+        )
     else:
         lines.append("- Sources found:")
         for src in candidate.audit_sources_found:
@@ -311,6 +328,10 @@ def _frontmatter_dict(candidate: CandidateRecord) -> dict[str, Any]:
             for src in candidate.audit_sources_found
         ],
         "under_audited": candidate.under_audited,
+        # False = no audit source was consultable, so audit_density_score is
+        # UNKNOWN rather than zero. Lifted into the vault so a downstream audit
+        # never reads an unresolved record as a confirmed audit gap.
+        "audit_record_resolved": candidate.audit_record_resolved,
         # --- Section 6: Suggested Focus Areas ---
         "edge_match_keywords": candidate.edge_match_keywords,
         "focus_areas_suggested": candidate.focus_areas_suggested,

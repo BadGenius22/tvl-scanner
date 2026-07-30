@@ -78,8 +78,17 @@ def freshness_score(age_days: int, max_age_days: int) -> float:
     return 10.0 * (1.0 - age_days / max_age_days)
 
 
-def audit_gap_score(audit_density_score: int) -> float:
-    """Inverse of audit density. 0 audits → 10, 5+ audits → 0."""
+def audit_gap_score(audit_density_score: int, resolved: bool = True) -> float:
+    """Inverse of audit density. 0 audits → 10, 5+ audits → 0.
+
+    `resolved=False` means no audit source was consultable, so a score of 0
+    is "unknown", not "zero audits". Unknown returns a neutral 5.0 — the same
+    convention `activity_score` already uses for a None user count. Awarding
+    the full 10.0 there is what surfaced Pareto Credit (14 audits, published
+    only on its own docs site) at rank 2 of a live scan.
+    """
+    if not resolved:
+        return 5.0
     return max(0.0, 10.0 - 2.0 * audit_density_score)
 
 

@@ -540,3 +540,70 @@ def test_github_url_matches_protocol_rejects_non_github_url() -> None:
     assert not github_url_matches_protocol(
         "https://example.com/audits", slug="example", display_name="Example"
     )
+
+
+def test_audit_context_gate_matches_plural_audits() -> None:
+    """`\\baudit\\b` never matched "audits" — the commonest word on an audit page.
+
+    Regression guard for the Pareto Credit false positive: its audits page uses
+    the word 33 times, every one plural, and names Sherlock 18 times. The gate
+    rejected the page, all firm names were discarded, and the protocol scored
+    0 audits against 14 real ones.
+    """
+    from tvl_scanner.enrich.homepage_scrape import AUDIT_CONTEXT_PATTERN
+
+    for text in (
+        "Audits",
+        "Security Audits",
+        "audits",
+        "audit",
+        "audited by Spearbit",
+        "auditor",
+        "auditors",
+        "security reviews",
+        "security assessments",
+        "reviewed by",
+    ):
+        assert AUDIT_CONTEXT_PATTERN.search(text), f"gate must accept {text!r}"
+    assert AUDIT_CONTEXT_PATTERN.search("no security content here") is None
+
+
+def test_plural_only_page_yields_firm_matches() -> None:
+    """A page that only ever says "Audits" must still surface its firms."""
+    import re
+
+    from tvl_scanner.enrich.homepage_scrape import (
+        AUDIT_CONTEXT_PATTERN,
+        AUDIT_FIRM_PHRASES,
+    )
+
+    html = "<h1>Audits</h1><table><tr><td>Sherlock</td><td>Jun 2026</td></tr></table>"
+    assert AUDIT_CONTEXT_PATTERN.search(html)
+    hits = {tag for pat, tag in AUDIT_FIRM_PHRASES.items() if pat.search(html)}
+    assert "sherlock" in hits
+    assert not re.search(r"\baudit\b", html, re.I), "fixture must be plural-only"
+
+
+def test_docs_subdomain_of_own_domain_probed_early() -> None:
+    """docs.<own domain> must beat <slug>.com guesses — callers pass max_attempts=4.
+
+    Regression guard for Pareto Credit: display name "Pareto Credit" slugifies
+    to `paretocredit`, so every `pareto.com/...` guess came first and the real
+    docs site `docs.pareto.credit` landed at index 24 — unreachable.
+    """
+    from tvl_scanner.enrich.homepage_scrape import derive_candidate_urls
+
+    urls = derive_candidate_urls("Pareto Credit", "https://pareto.credit/")
+    assert "https://docs.pareto.credit" in urls[:3], urls[:6]
+
+
+def test_wrong_base_url_still_reaches_slug_guess() -> None:
+    """The docs probe must stay cheap or it starves the slug fallback.
+
+    When DefiLlama hands back an unrelated link (the SoDEX case), the brand's
+    `.com` is the URL that saves us and must remain within a small budget.
+    """
+    from tvl_scanner.enrich.homepage_scrape import derive_candidate_urls
+
+    urls = derive_candidate_urls("SoDEX Bridge", "https://ssi.sosovalue.com/share/x/abc")
+    assert "https://sodex.com/security" in urls[:8], urls[:10]

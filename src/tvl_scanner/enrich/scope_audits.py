@@ -100,8 +100,17 @@ def extract_scope_audit_sources(program: dict[str, Any]) -> list[AuditSource]:
     seen: set[str] = set()
     sources: list[AuditSource] = []
 
-    for field in PROSE_FIELDS:
-        raw = program.get(field)
+    # Asset URLs are scanned alongside the prose because some programs list an
+    # audits page (or an audit-bearing repo path) as an in-scope asset rather
+    # than citing it in text. Costs nothing — the assets are already in hand.
+    asset_urls = " ".join(
+        a.get("url", "")
+        for a in (program.get("assets") or [])
+        if isinstance(a, dict) and isinstance(a.get("url"), str)
+    )
+
+    for field in (*PROSE_FIELDS, "__assets__"):
+        raw = asset_urls if field == "__assets__" else program.get(field)
         if not isinstance(raw, str) or not raw:
             continue
         for match in _URL.findall(raw):

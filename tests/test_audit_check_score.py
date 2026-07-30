@@ -110,9 +110,34 @@ def test_multiply_audited_repo_not_under_audited() -> None:
 
 
 def test_compute_score_zero_for_empty_candidate() -> None:
+    """No consultable source → score 0 but the record is UNRESOLVED.
+
+    A bare candidate has no GitHub repo, no DefiLlama audit field and no
+    prose citation, so 0 means "unknown", not "zero audits" — and an unknown
+    record must not be asserted as under-audited. Pareto Credit landed here
+    with 14 real audits published only on its own docs site.
+    """
     candidate = _enriched()
     result = compute_score(candidate, contest_sources=[])
     assert result.audit_density_score == 0
+    assert result.audit_record_resolved is False
+    assert result.under_audited is False
+
+
+def test_zero_score_with_repo_is_resolved_and_under_audited() -> None:
+    """A repo we could inspect makes 0 a real finding, not an unknown."""
+    candidate = _enriched(github_repo="https://github.com/foo/bar")
+    result = compute_score(candidate, contest_sources=[])
+    assert result.audit_density_score == 0
+    assert result.audit_record_resolved is True
+    assert result.under_audited is True
+
+
+def test_zero_score_with_defillama_count_is_resolved() -> None:
+    """A DefiLlama audit count of 0 is data — we looked and it said none."""
+    candidate = _with_updates(_enriched(), defillama_audit_count=0)
+    result = compute_score(candidate, contest_sources=[])
+    assert result.audit_record_resolved is True
     assert result.under_audited is True
 
 
@@ -336,8 +361,14 @@ def test_bounty_scope_audit_clears_under_audited() -> None:
 
 
 def test_no_scope_audit_leaves_candidate_under_audited() -> None:
-    """The override must not fire for a candidate with genuinely no evidence."""
-    scored = compute_score(_enriched())
+    """The BOUNTY_SCOPE_AUDIT override must not fire without a citation.
 
+    Uses a candidate with a GitHub repo so the audit record is RESOLVED —
+    otherwise this would pass for the wrong reason (unresolved also yields
+    under_audited=False, which would hide a broken override).
+    """
+    scored = compute_score(_enriched(github_repo="https://github.com/foo/bar"))
+
+    assert scored.audit_record_resolved is True
     assert scored.under_audited is True
     assert scored.audit_density_score <= UNDER_AUDITED_THRESHOLD
