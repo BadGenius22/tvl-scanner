@@ -280,3 +280,26 @@
   bounty_program: immunefi
   bounty_max_payout_usd: 100000
   extra_keywords: [opcode, instruction, router, swap, decay, fee, traits, vm]
+
+- slug: livepeer
+  display_name: Livepeer
+  github: https://github.com/livepeer/protocol
+  branch: delta                      # NOT master — `delta` is the default branch and where shipping happens
+  chains: [arbitrum, ethereum]
+  languages: [solidity]
+  bounty_program: immunefi
+  bounty_max_payout_usd: 40000
+  audited_at_commit: 2221f58a61ad9ddc23e696bc63223f9fbf1107f4   # HEAD 2026-07-30, reviewed by me 2026-07-31
+  audited_at_date: "2026-07-31"
+  extra_keywords: [transcoder, bonding, earningspool, cumulativereward, rewardcaller, minter, ticket]
+  note: >-
+    Traced 2026-07-31. Immunefi $40k crit (up_to + 10% rule, KYC, Primacy of RULES,
+    30 enumerated addresses). $46.3M sits in IN-SCOPE contracts — Minter
+    0xc20DE371 holds 30.65M LPT (85.4% of Arbitrum supply, all bonded stake) + 176
+    ETH and is NOT proxied, so no upgrade gap; L1Escrow 0x6A23F494 holds 5.2M LPT.
+    BUT scope and live code are INVERTED for the two upgradeable managers:
+    BondingManagerTarget in-scope 0x6b397f20 (2024-03-25) vs LIVE 0xbe197fcB
+    (2026-07-27); TicketBrokerTarget in-scope 0xD906D192 (2022-03-03) vs LIVE
+    0x3B68fbF8 (2026-06-22). No POI, so the live code is unsubmittable today.
+    This entry watches for the NEXT ship. The listing trigger is manual —
+    see the memory note; no watcher can express an Immunefi scope diff.
