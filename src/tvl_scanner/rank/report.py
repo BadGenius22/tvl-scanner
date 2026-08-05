@@ -213,6 +213,41 @@ def _candidate_body(candidate: CandidateRecord) -> str:
                 "bytecode byte-for-byte without running `solana-verify` yourself."
             )
         lines.append("")
+
+        # On-chain program resolved from the DefiLlama TVL adapter. Only present
+        # when the walk (token account → SPL authority → owning program)
+        # succeeded — i.e. the TVL is held by a custom program, not a plain
+        # wallet or multisig.
+        if candidate.solana_program_id:
+            lines.append("## On-chain program (resolved on-chain)")
+            lines.append("")
+            lines.append(
+                f"- **Program ID**: `{candidate.solana_program_id}` "
+                "(walked from the DefiLlama TVL adapter's token account → SPL authority → owning program)"
+            )
+            auth_type = candidate.solana_upgrade_authority_type
+            if auth_type == "immutable":
+                lines.append(
+                    "- **Upgrade authority**: none — the program is **IMMUTABLE** "
+                    "(cannot be redeployed). Deployed code is the final code."
+                )
+            elif candidate.solana_upgrade_authority:
+                label = {
+                    "single_keypair": "⚠ SINGLE KEYPAIR (not a multisig)",
+                    "squads_multisig": "Squads multisig (shared custody)",
+                }.get(auth_type or "", auth_type or "unknown")
+                lines.append(
+                    f"- **Upgrade authority**: `{candidate.solana_upgrade_authority}` — {label}"
+                )
+                if auth_type == "single_keypair":
+                    lines.append(
+                        "  - ⚠ **Centralization**: a single keypair can redeploy this "
+                        "program and reach every account it controls, including the TVL. "
+                        "Any code-level finding sits *beneath* a drain risk the operator "
+                        "already holds — weigh submission value accordingly, and treat the "
+                        "authority key's custody as the dominant risk."
+                    )
+            lines.append("")
     elif candidate.is_verified is not None:
         lines.append("## On-chain verification (Etherscan V2)")
         lines.append("")
@@ -368,6 +403,13 @@ def _frontmatter_dict(candidate: CandidateRecord) -> dict[str, Any]:
         # be resolved (BSC free-tier, Solana, no detail address) and for pool
         # candidates (whose `address` is already the real contract).
         "onchain_address": candidate.onchain_address,
+        # Solana program resolved from the DefiLlama TVL adapter (None for EVM
+        # and for custodied Solana protocols with no custom program). The
+        # upgrade-authority type is a centralization signal the auditor must
+        # weigh: "single_keypair" = one key can redeploy and reach all funds.
+        "solana_program_id": candidate.solana_program_id,
+        "solana_upgrade_authority": candidate.solana_upgrade_authority,
+        "solana_upgrade_authority_type": candidate.solana_upgrade_authority_type,
         "primary_contract": candidate.primary_contract,
         "priority_score": candidate.priority_score,
         "why_interesting": candidate.why_interesting,

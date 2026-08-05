@@ -27,7 +27,9 @@ import yaml
 
 log = logging.getLogger(__name__)
 
-BountyPlatform = Literal["immunefi", "hackerone", "hackenproof", "cantina", "selfhosted"]
+BountyPlatform = Literal[
+    "immunefi", "hackerone", "hackenproof", "cantina", "bugcrowd", "intigriti", "selfhosted"
+]
 
 
 @dataclass(frozen=True)

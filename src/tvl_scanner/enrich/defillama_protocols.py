@@ -292,6 +292,29 @@ async def _process_protocol(
             if addr_chain is not None and addr_value is not None:
                 onchain_address = f"{addr_chain.value}:{addr_value}"
 
+        # Solana on-chain program resolution. Catalog Solana candidates have no
+        # real address — Stage 1's on-chain leg is EVM-only — so without this the
+        # `address` stays `defillama:{slug}` and the auditor gets no code pointer.
+        # Walk the DefiLlama TVL adapter (detail `module` field) → token account →
+        # SPL authority → owning program, and read its upgrade authority. The true
+        # on-chain deploy date also beats the listedAt-based placeholder.
+        solana_program_id: str | None = None
+        solana_upgrade_authority: str | None = None
+        solana_upgrade_authority_type: str | None = None
+        if chain == Chain.SOLANA and detail:
+            module = str(detail.get("module") or "").strip()
+            if module:
+                from tvl_scanner.enrich.solana_rpc import resolve_solana_program
+
+                profile = await resolve_solana_program(module, client=client)
+                if profile:
+                    solana_program_id = profile.program_id
+                    solana_upgrade_authority = profile.upgrade_authority
+                    solana_upgrade_authority_type = profile.authority_type
+                    onchain_address = f"{Chain.SOLANA.value}:{profile.program_id}"
+                    if profile.deploy_date is not None:
+                        first_seen = profile.deploy_date
+
         # github_url resolution: flat catalog → detail → curated registry →
         # org-name auto-guess (G2+G3) → None.
         # BATCH I fix #1: curated seed file as a fallback, covering
@@ -340,6 +363,30 @@ async def _process_protocol(
         bounty_program = bounty_entry.platform if bounty_entry else "none"
         bounty_url = bounty_entry.url if bounty_entry else None
         bounty_payout = bounty_entry.max_payout_usd if bounty_entry else None
+
+        # Broad bug-bounty directory (lissy93/bug-bounties) — third fallback after
+        # the curated seeds, catching HackerOne/Bugcrowd/Intigriti/self-hosted
+        # programs Immunefi-centric detection misses. Only upgrades from "none".
+        # The DefiLlama homepage URL gives the directory a domain to match on.
+        if bounty_program == "none":
+            from tvl_scanner.enrich.bugbounty_directory import match_directory
+
+            homepage = protocol.get("url") or (detail.get("url") if detail else None)
+            dir_entry = await match_directory(
+                display_name=name,
+                homepage_url=homepage if isinstance(homepage, str) else None,
+                defillama_slug=slug,
+                target_name=slug,
+                client=client,
+            )
+            if dir_entry is not None:
+                bounty_program = dir_entry.platform
+                bounty_url = dir_entry.url
+                bounty_payout = dir_entry.max_payout_usd
+                log.info(
+                    "bugbounty-directory match: %s -> %s (%s)",
+                    slug, dir_entry.name, dir_entry.platform,
+                )
 
         # BATCH J1: Solana wrapper-program detection. For Solana candidates
         # that match a known LST in our mint registry, query the stake pool
@@ -489,6 +536,9 @@ async def _process_protocol(
             ),
             precomputed_audit_sources=precomputed_sources,
             onchain_address=onchain_address,
+            solana_program_id=solana_program_id,
+            solana_upgrade_authority=solana_upgrade_authority,
+            solana_upgrade_authority_type=solana_upgrade_authority_type,
         )
     except Exception as exc:
         log.warning("defillama protocol discovery: skipped entry: %s", exc)
@@ -644,6 +694,11 @@ async def _resolve_true_deploy_dates(
         try:
             chain = Chain(chain_str)
         except ValueError:
+            continue
+        # Solana deploy dates are resolved inline via solana_rpc (getBlockTime);
+        # fetch_creation_dates_batch is Etherscan V2 and can't resolve base58
+        # program ids. Skip so we don't feed a Solana program id to Etherscan.
+        if chain == Chain.SOLANA:
             continue
         by_chain[chain].append(addr)
         addr_index[(chain, addr.lower())].append(cand)

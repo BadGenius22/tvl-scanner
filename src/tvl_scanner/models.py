@@ -129,7 +129,9 @@ class EnrichedCandidate(BaseModel):
     github_repo: str | None = None
     loc_estimate: int | None = None
     docs_url: str | None = None
-    bounty_program: Literal["immunefi", "hackerone", "hackenproof", "cantina", "selfhosted", "none"] = "none"
+    bounty_program: Literal[
+        "immunefi", "hackerone", "hackenproof", "cantina", "bugcrowd", "intigriti", "selfhosted", "none"
+    ] = "none"
     bounty_url: str | None = None
     bounty_max_payout_usd: int | None = None
     defillama_slug: str | None = None
@@ -164,6 +166,19 @@ class EnrichedCandidate(BaseModel):
     # as first_seen. None for pool-sourced candidates (their `address` is already
     # the real contract) and for catalog protocols with no usable EVM address.
     onchain_address: str | None = None
+
+    # Solana on-chain program resolution (populated by enrich/solana_rpc.py for
+    # DefiLlama-catalog Solana candidates). Stage 1 has no Solana leg, so a
+    # catalog Solana candidate otherwise carries only a `defillama:{slug}`
+    # placeholder and no auditable code pointer. The resolver walks the DefiLlama
+    # TVL adapter's token account → SPL authority → owning program to recover the
+    # real program id, then reads its upgrade authority. `solana_upgrade_authority_type`
+    # is the load-bearing centralization signal: "single_keypair" means one key
+    # can redeploy the program and reach all funds it controls. All None for EVM
+    # candidates and for Solana protocols whose TVL is custodied (no custom program).
+    solana_program_id: str | None = None
+    solana_upgrade_authority: str | None = None
+    solana_upgrade_authority_type: str | None = None
 
     # Pre-computed audit sources from Batch J/K detection (wrapper programs,
     # bytecode pattern matches, homepage regex hits). compute_score in stage 3

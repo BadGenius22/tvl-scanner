@@ -424,6 +424,28 @@ async def enrich_one(
                 im_match.max_payout_usd,
             )
 
+    # Broad bug-bounty directory (lissy93/bug-bounties) — third fallback, catching
+    # HackerOne/Bugcrowd/Intigriti/self-hosted programs Immunefi-centric detection
+    # misses. Pool candidates carry no homepage here, so this matches by
+    # distinctive name only (domain matching applies in the catalog path).
+    if bounty_program == "none":
+        from tvl_scanner.enrich.bugbounty_directory import match_directory
+
+        dir_entry = await match_directory(
+            display_name=on_chain_name or _display_name(contract, dl_match),
+            defillama_slug=str(dl_match["slug"]) if dl_match and dl_match.get("slug") else None,
+            target_name=_target_slug(contract, dl_match),
+            client=client,
+        )
+        if dir_entry is not None:
+            bounty_program = dir_entry.platform
+            bounty_url_raw = dir_entry.url
+            bounty_payout = dir_entry.max_payout_usd
+            log.info(
+                "bugbounty-directory match: %s -> %s (%s)",
+                _target_slug(contract, dl_match), dir_entry.name, dir_entry.platform,
+            )
+
     return EnrichedCandidate(
         chain=contract.chain,
         address=contract.address,
