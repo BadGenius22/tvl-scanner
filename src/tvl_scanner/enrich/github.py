@@ -106,8 +106,17 @@ _ORG_SUFFIX_VARIANTS = (
     "-labs",       # bima-labs
 )
 
+# How many org-name guesses to try per protocol. Each costs 1-2 API calls on a
+# miss, but the negative cache makes repeats within a scan free. Raised from 4
+# when the ordering fix (see _generate_org_candidates) made the later slots
+# actually useful — under the old inverted nesting they were all suffix noise.
+_ORG_CANDIDATE_BUDGET = 6
+
 _ORG_NEGATIVE_CACHE: set[str] = set()  # org names confirmed not-found / empty
 _ORG_POSITIVE_CACHE: dict[str, str] = {}  # slug → resolved repo URL
+# slug → (audit repo URL, report count). Separate from _ORG_POSITIVE_CACHE
+# because an org can have an Audits repo but no smart-contract code repo.
+_ORG_AUDIT_REPO_CACHE: dict[str, tuple[str, int] | None] = {}
 
 # Circuit breaker: if rate-limit / transport errors exceed this count during a
 # single scan, stop calling find_org_with_repos for the rest of the run. Avoids
@@ -140,9 +149,18 @@ def _is_rate_limit_error(exc: HttpError) -> bool:
 def _generate_org_candidates(slug: str, display_name: str | None) -> list[str]:
     """Produce a deduped list of GitHub org-name guesses for a protocol slug.
 
-    Strategy: tries the slug as-is, then the slug's first token, each with
-    common suffix variants. Also adds the slug-with-dashes-removed for
-    protocols like 'rocketpool' (org name) vs 'rocket-pool' (slug).
+    Ordering is BASE-MINOR / SUFFIX-MAJOR: every bare base name is tried before
+    any suffixed variant. The previous nesting was inverted, so for a
+    multi-token slug all of the (then 4) budget slots were consumed by suffix
+    variants of the full slug and the first token was never reached —
+    `hyperbeat-usd` produced only `hyperbeat-usd{,-protocol,-dao,-finance}`,
+    never `hyperbeat`. Bare names are by far the most common org form, so they
+    must come first.
+
+    Bases tried: the slug, its first token, and the slug with dashes removed
+    ('rocketpool' org vs 'rocket-pool' slug), each also with a `0x` prefix —
+    a very common crypto org convention (`0xhyperbeat`, `0xPolygon`) that no
+    suffix variant can reach.
     """
     if not slug:
         return []
@@ -158,18 +176,21 @@ def _generate_org_candidates(slug: str, display_name: str | None) -> list[str]:
     s = slug.strip().lower()
     first_token = s.split("-")[0]
 
-    for base in (s, first_token, s.replace("-", "")):
-        for suffix in _ORG_SUFFIX_VARIANTS:
-            add(base + suffix)
-
-    # Display-name slug variants (e.g. "BIMA CDP" → "bimacdp")
+    bases = [s, first_token, s.replace("-", "")]
+    # Display-name slug variant (e.g. "BIMA CDP" → "bimacdp")
     if display_name:
         dn = re.sub(r"[^a-z0-9]+", "", display_name.lower())
         if dn:
-            for suffix in _ORG_SUFFIX_VARIANTS:
-                add(dn + suffix)
+            bases.append(dn)
+    # `0x`-prefixed forms of each base, kept adjacent to their plain form in
+    # priority so they are reached before any suffix variant.
+    bases.extend([f"0x{b}" for b in list(bases)])
 
-    return out[:4]  # bound API cost — top variants only ({slug}, {first}, {slug}-protocol, {first}-protocol)
+    for suffix in _ORG_SUFFIX_VARIANTS:  # "" first — bare names before suffixed
+        for base in bases:
+            add(base + suffix)
+
+    return out[:_ORG_CANDIDATE_BUDGET]
 
 
 async def find_org_with_repos(
@@ -318,6 +339,109 @@ def _count_audit_reports(entries: Any) -> int:
         if e.get("type") == "dir" or (name.lower().endswith((".pdf", ".md")) and _AUDIT_REPORT_RE.search(name)):
             n += 1
     return n
+
+
+# A repo whose whole purpose is publishing audit reports. Deliberately narrow:
+# matches `Audits`, `audit`, `security-audits`, `audit-reports`, but NOT a code
+# repo that merely mentions audits (`audited-vaults`, `auditor-tools`).
+_AUDIT_REPO_NAME_RE = re.compile(r"^(?:security[-_])?audits?(?:[-_]reports?)?$", re.IGNORECASE)
+
+
+async def find_org_audit_repo(
+    slug: str | None,
+    display_name: str | None = None,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> tuple[str, int] | None:
+    """Find a dedicated org-level audit-reports REPO. Returns (url, report_count).
+
+    This closes a false-negative class that the `audits/`-folder check inside a
+    single code repo structurally cannot see. Many teams publish reports in a
+    standalone repo (`github.com/<org>/Audits`) rather than a folder, and the
+    org name usually does not match the DefiLlama slug — so nothing ever links
+    the protocol to its own audit history.
+
+    Worked example: slug `hyperbeat-usd` → org `0xhyperbeat` → repo `Audits`
+    with 7 per-component directories (Zellic, Nethermind, Certora, Codespect,
+    Pashov reports). Previously scored `audit_density_score: 0` /
+    `under_audited: true` and ranked #2 of 50.
+
+    Counting reuses `_count_audit_reports`, so each top-level entry — a report
+    file or a per-component/per-round subdirectory — counts once.
+    """
+    if not slug:
+        return None
+    cache_key = slug.strip().lower()
+    if cache_key in _ORG_AUDIT_REPO_CACHE:
+        return _ORG_AUDIT_REPO_CACHE[cache_key]
+
+    global _RATE_LIMIT_ERRORS
+    if _RATE_LIMIT_ERRORS >= _RATE_LIMIT_BUDGET:
+        return None  # not cached — transient, may succeed on a later scan
+
+    s = settings()
+    headers = _auth_headers()
+
+    for org_name in _generate_org_candidates(slug, display_name):
+        try:
+            repos_payload: Any = await get_json(
+                f"{s.GITHUB_API_BASE}/users/{org_name}/repos?sort=updated&per_page=100",
+                headers=headers,
+                client=client,
+            )
+        except HttpError as exc:
+            if _is_rate_limit_error(exc):
+                _RATE_LIMIT_ERRORS += 1
+                return None
+            continue  # org missing / private — try the next variant
+        except Exception as exc:
+            log.debug("github: org repo list failed for %s: %s", org_name, exc)
+            continue
+
+        if not isinstance(repos_payload, list):
+            continue
+
+        for repo in repos_payload:
+            if not isinstance(repo, dict):
+                continue
+            name = repo.get("name")
+            if not isinstance(name, str) or not _AUDIT_REPO_NAME_RE.match(name):
+                continue
+
+            try:
+                contents: Any = await get_json(
+                    f"{s.GITHUB_API_BASE}/repos/{org_name}/{name}/contents",
+                    headers=headers,
+                    client=client,
+                )
+            except HttpError as exc:
+                if _is_rate_limit_error(exc):
+                    _RATE_LIMIT_ERRORS += 1
+                    return None
+                continue
+            except Exception as exc:
+                log.debug("github: audit repo contents failed for %s/%s: %s", org_name, name, exc)
+                continue
+
+            count = _count_audit_reports(contents)
+            if count == 0:
+                continue  # empty shell repo proves nothing
+
+            url = repo.get("html_url")
+            if not isinstance(url, str):
+                url = f"https://github.com/{org_name}/{name}"
+            log.info(
+                "github: found org-level audit repo %s (%d reports) for slug=%s",
+                url,
+                count,
+                slug,
+            )
+            result = (url, count)
+            _ORG_AUDIT_REPO_CACHE[cache_key] = result
+            return result
+
+    _ORG_AUDIT_REPO_CACHE[cache_key] = None
+    return None
 
 
 async def enrich_repo(

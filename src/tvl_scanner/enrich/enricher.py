@@ -210,6 +210,26 @@ async def enrich_one(
     if github_url:
         repo_metadata = await enrich_repo(github_url, client=client)
 
+    # Org-level `Audits` REPO check — see find_org_audit_repo. Only runs when
+    # the in-repo audits/ folder check found nothing, which is the case that
+    # otherwise yields a false `under_audited: true`.
+    org_audit_sources: list[AuditSource] = []
+    if dl_slug and not (repo_metadata and repo_metadata.audits_folder_exists):
+        from tvl_scanner.enrich.github import find_org_audit_repo
+        found = await find_org_audit_repo(
+            dl_slug, contract.protocol_guess, client=client
+        )
+        if found:
+            audit_repo_url, report_count = found
+            org_audit_sources.append(
+                AuditSource(
+                    source=AuditSourceKind.GITHUB_ORG_AUDIT_REPO,
+                    url=audit_repo_url,
+                    title=f"Org-level audit repo with {report_count} report(s)/component(s)",
+                    weight=min(3, max(1, report_count)),
+                )
+            )
+
     # Verification check — dispatches by chain. Etherscan V2 for EVM, OtterSec
     # reproducible-build registry for Solana. Synthetic `defillama:<slug>`
     # addresses fall through to empty VerificationResult in both paths.
@@ -227,7 +247,7 @@ async def enrich_one(
     # check the keccak256 against our registry of known DEX pool patterns
     # (Uniswap V2/V3 pair, Curve, Balancer, etc.). If matched, the candidate
     # is a deployment of an audited factory and gets a synthetic AuditSource.
-    precomputed_sources: list[AuditSource] = []
+    precomputed_sources: list[AuditSource] = list(org_audit_sources)
     if contract.chain != Chain.SOLANA and contract.address.startswith("0x"):
         bytecode_match = await check_bytecode_match(
             contract.chain, contract.address, client=client

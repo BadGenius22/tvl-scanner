@@ -177,3 +177,140 @@ async def test_enrich_repo_invalid_url_returns_none() -> None:
     with patch("tvl_scanner.enrich.github.get_secret", return_value="test-pat"):
         assert await enrich_repo("https://gitlab.com/foo/bar") is None
         assert await enrich_repo(None) is None
+
+
+# ---------------------------------------------------------------------------
+# Org-name candidate ordering + org-level audit-repo discovery
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_org_caches():
+    """Module-level caches persist across a process; isolate each test."""
+    from tvl_scanner.enrich import github as gh
+
+    gh._ORG_NEGATIVE_CACHE.clear()
+    gh._ORG_POSITIVE_CACHE.clear()
+    gh._ORG_AUDIT_REPO_CACHE.clear()
+    gh._RATE_LIMIT_ERRORS = 0
+    yield
+    gh._ORG_NEGATIVE_CACHE.clear()
+    gh._ORG_POSITIVE_CACHE.clear()
+    gh._ORG_AUDIT_REPO_CACHE.clear()
+
+
+def test_org_candidates_try_bare_names_before_suffixes() -> None:
+    """Regression: the old nesting was base-major/suffix-minor, so every budget
+    slot went to suffix variants of the full slug and the first token was never
+    reached. `hyperbeat-usd` produced only hyperbeat-usd{,-protocol,-dao,-finance}.
+    """
+    from tvl_scanner.enrich.github import _generate_org_candidates
+
+    got = _generate_org_candidates("hyperbeat-usd", "Hyperbeat USD")
+    assert got[:3] == ["hyperbeat-usd", "hyperbeat", "hyperbeatusd"]
+    # The first token must be reached, and before any suffixed variant.
+    assert "hyperbeat" in got
+    assert got.index("hyperbeat") < min(
+        (i for i, n in enumerate(got) if n.endswith("-protocol")), default=len(got)
+    )
+
+
+def test_org_candidates_include_0x_prefix_form() -> None:
+    """`0x<name>` is a common crypto org convention (0xhyperbeat) that no
+    suffix variant can reach."""
+    from tvl_scanner.enrich.github import _generate_org_candidates
+
+    got = _generate_org_candidates("hyperbeat-usd", "Hyperbeat USD")
+    assert "0xhyperbeat" in got
+
+
+def test_org_candidates_empty_slug() -> None:
+    from tvl_scanner.enrich.github import _generate_org_candidates
+
+    assert _generate_org_candidates("", None) == []
+
+
+def test_audit_repo_name_regex_is_narrow() -> None:
+    """Matches dedicated audit-report repos, not code repos that merely
+    mention audits."""
+    from tvl_scanner.enrich.github import _AUDIT_REPO_NAME_RE as r
+
+    for good in ("Audits", "audits", "audit", "security-audits", "audit-reports"):
+        assert r.match(good), good
+    for bad in ("audited-vaults", "auditor-tools", "contracts", "audits-v2-core"):
+        assert not r.match(bad), bad
+
+
+async def test_find_org_audit_repo_finds_org_level_repo(httpx_mock: HTTPXMock) -> None:
+    """The Hyperbeat case: slug `hyperbeat-usd`, org `0xhyperbeat`, repo `Audits`
+    holding one directory per audited component."""
+    from tvl_scanner.enrich.github import find_org_audit_repo
+
+    # First candidates miss; the 0x-prefixed org is the one that exists.
+    for org in ("hyperbeat-usd", "hyperbeat", "hyperbeatusd", "0xhyperbeat-usd"):
+        httpx_mock.add_response(
+            url=f"https://api.github.com/users/{org}/repos?sort=updated&per_page=100",
+            status_code=404,
+            json={"message": "Not Found"},
+        )
+    httpx_mock.add_response(
+        url="https://api.github.com/users/0xhyperbeat/repos?sort=updated&per_page=100",
+        json=[
+            {"name": "DefiLlama-Adapters", "html_url": "https://github.com/0xhyperbeat/DefiLlama-Adapters"},
+            {"name": "Audits", "html_url": "https://github.com/0xhyperbeat/Audits"},
+        ],
+    )
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/0xhyperbeat/Audits/contents",
+        json=[
+            {"name": "README.md", "type": "file"},
+            {"name": "liquid-bank", "type": "dir"},
+            {"name": "USD+", "type": "dir"},
+            {"name": "Vault-Infra", "type": "dir"},
+        ],
+    )
+
+    with patch("tvl_scanner.enrich.github.get_secret", return_value="test-pat"):
+        result = await find_org_audit_repo("hyperbeat-usd", "Hyperbeat USD")
+
+    assert result == ("https://github.com/0xhyperbeat/Audits", 3)
+
+
+async def test_find_org_audit_repo_rejects_empty_audit_repo(
+    httpx_mock: HTTPXMock,
+) -> None:
+    """A repo named `audits` with no report artifacts proves nothing."""
+    from tvl_scanner.enrich.github import find_org_audit_repo
+
+    httpx_mock.add_response(
+        url="https://api.github.com/users/ghostly/repos?sort=updated&per_page=100",
+        json=[{"name": "audits", "html_url": "https://github.com/ghostly/audits"}],
+    )
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/ghostly/audits/contents",
+        json=[{"name": "README.md", "type": "file"}],
+    )
+    # Remaining org-name candidates all miss.
+    for org in (
+        "0xghostly",
+        "ghostly-protocol",
+        "0xghostly-protocol",
+        "ghostly-dao",
+        "0xghostly-dao",
+    ):
+        httpx_mock.add_response(
+            url=f"https://api.github.com/users/{org}/repos?sort=updated&per_page=100",
+            status_code=404,
+            json={"message": "Not Found"},
+        )
+
+    with patch("tvl_scanner.enrich.github.get_secret", return_value="test-pat"):
+        result = await find_org_audit_repo("ghostly", "Ghostly")
+
+    assert result is None
+
+
+async def test_find_org_audit_repo_none_slug() -> None:
+    from tvl_scanner.enrich.github import find_org_audit_repo
+
+    assert await find_org_audit_repo(None) is None

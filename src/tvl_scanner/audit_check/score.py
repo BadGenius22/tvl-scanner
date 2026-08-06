@@ -196,6 +196,7 @@ CAPS: dict[AuditSourceKind, int] = {
     AuditSourceKind.DEFILLAMA: 3,
     AuditSourceKind.GITHUB_AUDITS_FOLDER: 3,
     AuditSourceKind.BOUNTY_SCOPE_AUDIT: 3,
+    AuditSourceKind.GITHUB_ORG_AUDIT_REPO: 3,
 }
 
 # Any candidate at or below this score is flagged as under-audited
@@ -441,6 +442,10 @@ def compute_score(
             AuditSourceKind.FACTORY_ATTRIBUTION,
             AuditSourceKind.PARENT_PROTOCOL,
             AuditSourceKind.BOUNTY_SCOPE_AUDIT,
+            # A dedicated org-level `Audits` repo is a deliberate publication
+            # act by the team — at least as strong as a homepage firm mention,
+            # and it carries the actual reports rather than a claim about them.
+            AuditSourceKind.GITHUB_ORG_AUDIT_REPO,
         ):
             under_audited = False
             break

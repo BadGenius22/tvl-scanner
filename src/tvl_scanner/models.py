@@ -63,6 +63,7 @@ class AuditSourceKind(StrEnum):
     FACTORY_ATTRIBUTION = "factory_attribution"  # Batch N: contract's factory() returns a known DEX factory (V3 pool etc.)
     PARENT_PROTOCOL = "parent_protocol"  # Batch Q: sibling under the same DefiLlama parentProtocol group has audit signals — typical pattern for multi-product teams (Rho Labs: rho-x, rho-x-lp-vault, rho-vaults-v1, rho-protocol all share rho.trading audits)
     BOUNTY_SCOPE_AUDIT = "bounty_scope_audit"  # audit report linked in the bounty program's own prose (prior findings are out of scope, so programs cite them) — the only signal that sees PDF-publishing firms like Sigma Prime / ChainSecurity / PeckShield
+    GITHUB_ORG_AUDIT_REPO = "github_org_audit_repo"  # a dedicated org-level `Audits` REPO (not an audits/ folder inside a code repo) — teams that publish reports this way are invisible to the folder check, since the org name rarely matches the DefiLlama slug (0xhyperbeat vs hyperbeat-usd)
 
 
 class AuditSource(BaseModel):

@@ -338,6 +338,26 @@ async def _process_protocol(
         if github_url:
             repo_metadata = await enrich_repo(github_url, client=client)
 
+        # Org-level `Audits` REPO check — independent of `github_url`, because
+        # the two resolve differently: a team can publish reports in
+        # <org>/Audits while its code repo is private (or is a fork the repo
+        # picker skips). Runs whenever the folder check came up empty, which is
+        # exactly the case that produced the false `under_audited: true`.
+        org_audit_sources: list[AuditSource] = []
+        if not (repo_metadata and repo_metadata.audits_folder_exists):
+            from tvl_scanner.enrich.github import find_org_audit_repo
+            found = await find_org_audit_repo(slug, name, client=client)
+            if found:
+                audit_repo_url, report_count = found
+                org_audit_sources.append(
+                    AuditSource(
+                        source=AuditSourceKind.GITHUB_ORG_AUDIT_REPO,
+                        url=audit_repo_url,
+                        title=f"Org-level audit repo with {report_count} report(s)/component(s)",
+                        weight=min(3, max(1, report_count)),
+                    )
+                )
+
         # Merge audit_links from detail with the flat catalog's set
         merged_audit_links = _audit_links(protocol)
         if detail:
@@ -393,7 +413,10 @@ async def _process_protocol(
         # account's owner. If owned by SPL Stake Pool (or similar wrapper),
         # generate a synthetic AuditSource crediting the upstream program's
         # audit history.
-        precomputed_sources: list[AuditSource] = []
+        # Seeded with any org-level audit-repo source found above. This also
+        # correctly suppresses the expensive 20-attempt homepage crawl below
+        # (`needs_k2_fallback`), since the reports themselves are already found.
+        precomputed_sources: list[AuditSource] = list(org_audit_sources)
         if chain == Chain.SOLANA:
             from tvl_scanner.enrich.solana_wrapper_check import check_lst_wrapper
             wrapper_match = await check_lst_wrapper(slug, client=client)
