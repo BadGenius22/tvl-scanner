@@ -12,7 +12,7 @@ or address, protocol_type = "unknown protocol on {chain}"). A DefiLlama miss
 is a positive signal for under-auditedness, not a reason to filter out.
 
 The scanner's Stage 3 audit-check will still try other audit-history sources
-(C4/Sherlock/Cantina contest search) for these unmatched records.
+(Sherlock/Cantina contest search) for these unmatched records.
 """
 
 from __future__ import annotations

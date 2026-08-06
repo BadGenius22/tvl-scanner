@@ -3,7 +3,7 @@
 For each enriched candidate:
   1. Gather DefiLlama audit links (already in the enriched record, no fetch)
   2. Gather GitHub audits/ folder signal (already in the enriched record)
-  3. Query GitHub search for C4/Sherlock/Cantina audit-org repos matching
+  3. Query GitHub search for Sherlock/Cantina audit-org repos matching
      the protocol name (async, concurrency-capped)
   4. Call compute_score to fold everything into an AuditedCandidate
 

@@ -8,7 +8,7 @@ Weights (per the plan):
     DefiLlama audit_links:       1 point each, cap 3
     GitHub audits/+docs/audits:  1 point per report artifact, cap 3
     Solodit prior findings:      2 points (v2 — deferred)
-    C4/Sherlock/Cantina hit:     3 points per unique contest match
+    Sherlock/Cantina hit:        3 points per unique contest match
     Protocol docs mention:       1 point each (v2 — deferred)
 """
 

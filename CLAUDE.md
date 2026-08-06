@@ -85,7 +85,7 @@ The dedup step (`pipeline._dedupe_enriched`) prefers the DefiLlama catalog recor
 |-------|-----------|-----------|--------------|
 | 1 | `discover/` | `merge.py` (orchestrator), `geckoterminal.py`, `birdeye.py`, `alchemy.py`, `rpc.py` | `DiscoveredContract` |
 | 2 | `enrich/` | `enricher.py` (orchestrator), `defillama.py`, `defillama_protocols.py` (catalog path), `etherscan.py`, `github.py`, `homepage_scrape.py`, `evm_factory_check.py`, `solana_wrapper_check.py`, `solana_rpc.py` (resolves a DefiLlama Solana catalog candidate to its real on-chain program + upgrade-authority type — Stage 1 has no Solana leg, so catalog Solana rows are otherwise DefiLlama-only with no code pointer), `ottersec.py`, `bounty.py` (curated bounty registry) + `immunefi.py` (live Immunefi catalogue — address/name match) + `bugbounty_directory.py` (broad fallback: the lissy93/bug-bounties directory of ~3k programs — catches HackerOne/Bugcrowd/Intigriti/self-hosted bounties the Immunefi-centric sources miss; conservative domain/distinctive-name match, paying programs only; consulted only after curated seeds + live Immunefi both miss) + `immunefi_catalog.py` (bounty-first discovery — seeds a candidate per active Immunefi program; see `immunefi-scan` mode) | `EnrichedCandidate` |
-| 3 | `audit_check/` | `checker.py` (orchestrator), `contests.py` (C4/Sherlock/Cantina via GitHub search), `score.py` | `AuditedCandidate` |
+| 3 | `audit_check/` | `checker.py` (orchestrator), `contests.py` (Sherlock/Cantina via GitHub search), `score.py` | `AuditedCandidate` |
 | 4 | `rank/` | `priority.py` (formula), `report.py` (markdown + per-candidate YAML) | `CandidateRecord` |
 
 ## Priority formula (rank/priority.py)
@@ -105,7 +105,7 @@ Each sub-score is normalized to [0, 10]. `audit_gap_score` carries the most weig
 
 - DefiLlama audit links: 1 point each, cap 3
 - GitHub `audits/` folder present: 1 point
-- C4/Sherlock/Cantina contest hit: 3 points each
+- Sherlock/Cantina contest hit: 3 points each (Code4rena removed: the fine-grained `github` PAT gets HTTP 422 on `org:code-423n4`, so it only burned search quota)
 - Solodit / docs mention: deferred to v2
 
 **Allowlist override**: `KNOWN_AUDITED_SLUG_PREFIXES` in `score.py` short-circuits known upstreams (e.g. `uniswap-*` pools) so each V4 pool doesn't surface as a false-positive "under-audited" candidate.

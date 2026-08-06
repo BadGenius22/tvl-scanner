@@ -1,12 +1,21 @@
 """Contest-platform audit history via GitHub search.
 
-Instead of scraping code4rena.com, sherlock.xyz, and cantina.xyz HTML (fragile,
-rate-limited, anti-bot), we query the GitHub search API for repositories in
-the three canonical audit-org accounts:
+Instead of scraping sherlock.xyz and cantina.xyz HTML (fragile, rate-limited,
+anti-bot), we query the GitHub search API for repositories in the canonical
+audit-org accounts:
 
-    code-423n4   → Code4rena  (every C4 contest is a repo, e.g. 2024-01-salty)
     sherlock-audit → Sherlock  (every Sherlock audit is a repo)
     spearbit     → Cantina/Spearbit (public portfolio of audit reports)
+
+Code4rena (`code-423n4`) was REMOVED. The `github` secret is a fine-grained PAT,
+and GitHub answers HTTP 422 for `org:code-423n4` search qualifiers under one
+("The listed users and repositories cannot be searched either because the
+resources do not exist or you do not have permission to view them") — an
+org-level third-party-access policy that `sherlock-audit` and `spearbit` do not
+apply. Every C4 query therefore returned zero hits while still consuming the
+30/min search bucket, which understated audit coverage for C4-audited protocols
+and inflated their audit-gap score. Protocols that cite a C4 report on their own
+site are still caught by the homepage-scrape signal in `enrich/homepage_scrape.py`.
 
 GitHub repository search endpoint:
     GET /search/repositories?q=<query>+org:<org>
@@ -38,8 +47,10 @@ from tvl_scanner.models import AuditSource, AuditSourceKind
 log = logging.getLogger(__name__)
 
 
+# Orgs actually searched. AuditSourceKind.CODE4RENA is deliberately absent (see
+# module docstring); the enum member is retained so historical artifacts that
+# carry code4rena sources still deserialize.
 AUDIT_ORGS: dict[AuditSourceKind, str] = {
-    AuditSourceKind.CODE4RENA: "code-423n4",
     AuditSourceKind.SHERLOCK: "sherlock-audit",
     AuditSourceKind.CANTINA: "spearbit",
 }
@@ -121,8 +132,13 @@ async def search_org(
     """
     if not query_token or len(query_token) < 3:
         return []
+    org = AUDIT_ORGS.get(kind)
+    if org is None:
+        # Retired org (e.g. CODE4RENA). Return empty rather than raising so a
+        # caller holding a stale kind degrades to "no hits" instead of aborting
+        # the whole audit-check stage.
+        return []
     s = settings()
-    org = AUDIT_ORGS[kind]
     params = {
         "q": f"{query_token} in:name org:{org}",
         "per_page": 10,
