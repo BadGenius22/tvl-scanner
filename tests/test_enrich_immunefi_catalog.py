@@ -16,6 +16,7 @@ from tvl_scanner.enrich.immunefi_catalog import (
     _pick_scope,
     discover_from_immunefi_catalog,
 )
+from tvl_scanner.enrich.immunefi_filter import REASON_NO_CHAIN
 from tvl_scanner.models import Chain, DiscoverySource, Language
 
 EVM = "0x" + "ab" * 20  # 40 hex chars
@@ -150,7 +151,7 @@ def _dl(slug: str = "royco", name: str = "Royco", tvl: float = 5_000_000, audits
 
 
 def test_build_candidate_happy_path() -> None:
-    cand = _build_candidate(_program(), _catalog([_dl()]), ALL, date(2026, 7, 15), kyc=None, min_bounty=None)
+    cand = _build_candidate(_program(), _catalog([_dl()]), ALL, date(2026, 7, 15))
     assert cand is not None
     assert cand.chain == Chain.ETHEREUM
     assert cand.address == EVM
@@ -165,27 +166,28 @@ def test_build_candidate_happy_path() -> None:
     assert Language.SOLIDITY in cand.languages
 
 
-def test_build_candidate_kyc_filter() -> None:
-    prog = _program(kyc=True)
-    assert _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15), kyc=False, min_bounty=None) is None
-    # kyc=None keeps it
-    assert _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15), kyc=None, min_bounty=None) is not None
+def test_build_candidate_no_longer_filters() -> None:
+    """The builder decides coverage only; every user constraint is ProgramFilter's.
 
-
-def test_build_candidate_min_bounty_filter() -> None:
-    prog = _program(max_bounty=1_000)
-    assert _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15), kyc=None, min_bounty=100_000) is None
+    Keeping filtering out of the builder is what lets each drop carry a named
+    reason in the funnel instead of vanishing as a bare None.
+    """
+    assert _build_candidate(_program(kyc=True), _catalog([]), ALL, date(2026, 7, 15)) is not None
+    assert (
+        _build_candidate(_program(max_bounty=1_000), _catalog([]), ALL, date(2026, 7, 15))
+        is not None
+    )
 
 
 def test_build_candidate_unsupported_chain_skipped() -> None:
     prog = _program(ecosystem=["Avalanche"], assets=[_sc("https://snowtrace.io/address/0xabc")])
-    assert _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15), kyc=None, min_bounty=None) is None
+    assert _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15)) is None
 
 
 def test_build_candidate_synthetic_address_when_no_evm() -> None:
     # No smart-contract assets, Solana ecosystem → synthetic address, no onchain_address.
     prog = _program(ecosystem=["Solana"], assets=[])
-    cand = _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15), kyc=None, min_bounty=None)
+    cand = _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15))
     assert cand is not None
     assert cand.chain == Chain.SOLANA
     assert cand.address == "immunefi:royco"
@@ -195,7 +197,7 @@ def test_build_candidate_synthetic_address_when_no_evm() -> None:
 
 def test_build_candidate_folds_immunefi_audits_when_no_dl() -> None:
     prog = _program(audits=[{"date": "2026-01-01"}, {"date": "2026-02-01"}, {"date": "2026-03-01"}])
-    cand = _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15), kyc=None, min_bounty=None)
+    cand = _build_candidate(prog, _catalog([]), ALL, date(2026, 7, 15))
     assert cand is not None
     assert cand.defillama_audit_count == 3
     assert cand.defillama_audit_note is not None and "3 prior audit" in cand.defillama_audit_note
@@ -214,9 +216,14 @@ async def test_discover_skips_unsupported_and_resolves_deploy_date() -> None:
             new=AsyncMock(return_value={EVM.lower(): date(2026, 6, 1)}),
         ),
     ):
-        results = await discover_from_immunefi_catalog(catalog=_catalog([_dl()]), scan_date=date(2026, 7, 15))
+        results, funnel = await discover_from_immunefi_catalog(
+            catalog=_catalog([_dl()]), scan_date=date(2026, 7, 15)
+        )
 
     assert len(results) == 1  # the Avalanche-only program is skipped
+    # The skip is attributed, not silent.
+    assert funnel.fetched == 2
+    assert funnel.dropped[REASON_NO_CHAIN] == 1
     cand = results[0]
     assert cand.target_name == "royco"
     assert cand.source == DiscoverySource.IMMUNEFI_CATALOG
@@ -225,7 +232,9 @@ async def test_discover_skips_unsupported_and_resolves_deploy_date() -> None:
 
 async def test_discover_empty_catalogue_returns_empty() -> None:
     with patch("tvl_scanner.enrich.immunefi.fetch_raw", new=AsyncMock(return_value=[])):
-        assert await discover_from_immunefi_catalog(catalog=_catalog([])) == []
+        results, funnel = await discover_from_immunefi_catalog(catalog=_catalog([]))
+    assert results == []
+    assert funnel.fetched == 0
 
 
 # ---- Bounty program profile attachment (12-criteria rubric) ----
@@ -261,7 +270,7 @@ def test_build_candidate_attaches_the_bounty_profile() -> None:
         }
     )
     cand = _build_candidate(
-        program, _catalog([]), ALL, date(2026, 4, 13), kyc=None, min_bounty=None
+        program, _catalog([]), ALL, date(2026, 4, 13)
     )
 
     assert cand is not None
@@ -287,8 +296,6 @@ def test_payout_ratio_resolves_when_defillama_supplies_tvl() -> None:
         _catalog([{"name": "Royco", "slug": "royco", "tvl": 25_000_000, "category": "Yield"}]),
         ALL,
         date(2026, 4, 13),
-        kyc=None,
-        min_bounty=None,
     )
     assert cand is not None
     assert cand.tvl_resolved is True
@@ -303,8 +310,6 @@ def test_profile_survives_a_program_with_no_optional_sections() -> None:
         _catalog([]),
         ALL,
         date(2026, 4, 13),
-        kyc=None,
-        min_bounty=None,
     )
     assert cand is not None
     assert cand.bounty_profile is not None

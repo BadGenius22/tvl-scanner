@@ -10,14 +10,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
 from rich.logging import RichHandler
 
+if TYPE_CHECKING:
+    from tvl_scanner.enrich.immunefi_filter import ProgramFilter
+
 from tvl_scanner import __version__
 from tvl_scanner.config import SecretsError, get_secret, settings
-from tvl_scanner.models import Chain
+from tvl_scanner.models import Chain, Language
 from tvl_scanner.pipeline import run_pipeline
 
 app = typer.Typer(
@@ -80,6 +84,49 @@ def _resolve_exclude_slugs(exclude: str | None, exclude_slugs_file: str | None) 
         console.print(f"[yellow]Excluding {len(file_slugs)} slug(s) from {path.name}[/]")
         slugs |= file_slugs
     return slugs
+
+
+def _describe_filters(filters: ProgramFilter) -> str:
+    """One-line echo of the active constraints, printed before a scan starts.
+
+    A scan that returns three candidates should never leave the user guessing
+    which flag did that, so the constraints are echoed up front and the funnel
+    accounts for them afterwards.
+    """
+    parts: list[str] = []
+    if not filters.include_closed:
+        parts.append("open programs only")
+    else:
+        parts.append("including CLOSED programs")
+    labels: list[tuple[object, str]] = [
+        (filters.min_tvl_usd, "min-tvl=${:,.0f}"),
+        (filters.min_max_bounty_usd, "min-bounty=${:,}"),
+        (filters.min_critical_floor_usd, "min-critical-floor=${:,}"),
+        (filters.min_payout_ratio_pct, "min-payout-ratio={:g}%"),
+        (filters.updated_within_days, "updated-within={}d"),
+        (filters.max_program_age_days, "max-program-age={}d"),
+        (filters.max_known_issues, "max-known-issues={}"),
+        (filters.audit_older_than_days, "audit-older-than={}d"),
+        (filters.min_scope_contracts, "min-scope={}"),
+        (filters.max_scope_contracts, "max-scope={}"),
+        (filters.fresh_scope_days, "fresh-scope={}d"),
+    ]
+    parts.extend(template.format(value) for value, template in labels if value is not None)
+    if filters.languages:
+        parts.append("languages=" + ",".join(sorted(x.value for x in filters.languages)))
+    if filters.kyc is False:
+        parts.append("no-kyc")
+    for flag, label in (
+        (filters.exclude_invite_only, "no-invite-only"),
+        (filters.exclude_boosted, "no-boosted"),
+        (filters.require_vault, "vault-only"),
+        (filters.under_audited_only, "under-audited-only"),
+    ):
+        if flag:
+            parts.append(label)
+    if filters.exclude_slugs:
+        parts.append(f"exclude={len(filters.exclude_slugs)} slug(s)")
+    return ", ".join(parts)
 
 
 def _setup_logging(level: str) -> None:
@@ -169,17 +216,106 @@ def immunefi_scan(
         help="Comma-separated chain filter (e.g. ethereum,arbitrum,base). "
         "Default: ALL supported chains — the point is to rank the whole bounty universe.",
     ),
-    no_kyc: bool = typer.Option(
-        False, "--no-kyc", help="Only programs that do NOT require KYC (full-payout solo hunting)."
-    ),
-    min_bounty: int | None = typer.Option(
-        None, "--min-bounty", help="Drop programs whose max payout is below this floor (USD)."
+    # --- Availability ---
+    include_closed: bool = typer.Option(
+        False,
+        "--include-closed",
+        help="Keep programs whose end date has passed. OFF by default: a closed "
+        "competition accepts no submissions, and ~24% of the live catalogue is "
+        "already-ended competitions.",
     ),
     exclude_invite_only: bool = typer.Option(
         False,
         "--exclude-invite-only",
         help="Drop invite-only programs (IOP). You cannot submit to those without an "
         "invitation; they are kept by default and flagged in the record.",
+    ),
+    # --- Criteria 1-3: economics ---
+    min_tvl: float | None = typer.Option(
+        None, "--min-tvl", help="[1] Drop programs whose protocol TVL is below this floor (USD)."
+    ),
+    min_bounty: int | None = typer.Option(
+        None, "--min-bounty", help="[2] Drop programs whose max payout is below this floor (USD)."
+    ),
+    min_critical_floor: int | None = typer.Option(
+        None,
+        "--min-critical-floor",
+        help="[2] Drop programs whose critical MINIMUM is below this (USD). Usually a "
+        "sharper filter than --min-bounty: expected value tracks the floor, not the ceiling.",
+    ),
+    min_payout_ratio: float | None = typer.Option(
+        None,
+        "--min-payout-ratio",
+        help="[3] Drop programs whose max payout is below this percent of TVL. "
+        "e.g. --min-payout-ratio 1 drops caps worth under 1% of the funds at risk.",
+    ),
+    # --- Criteria 4-6: program health ---
+    updated_within: int | None = typer.Option(
+        None,
+        "--updated-within",
+        help="[4] Keep only programs updated within this many days (drops dormant programs).",
+    ),
+    max_program_age: int | None = typer.Option(
+        None,
+        "--max-program-age",
+        help="[5] Keep only programs launched within this many days (less picked-over).",
+    ),
+    max_known_issues: int | None = typer.Option(
+        None,
+        "--max-known-issues",
+        help="[6] Drop programs with more than this many published known issues "
+        "(each one is a pre-closed submission area).",
+    ),
+    # --- Criterion 7: audit history ---
+    audit_older_than: int | None = typer.Option(
+        None,
+        "--audit-older-than",
+        help="[7] Keep only programs whose newest listed audit is at least this many days "
+        "old. Never-audited programs are kept.",
+    ),
+    under_audited_only: bool = typer.Option(
+        False,
+        "--under-audited-only",
+        help="[7] Keep only candidates Stage 3 resolves to audit_density_score <= 2.",
+    ),
+    # --- Criteria 8-9: scope ---
+    min_scope: int | None = typer.Option(
+        None, "--min-scope", help="[8] Drop programs with fewer in-scope contracts than this."
+    ),
+    max_scope: int | None = typer.Option(
+        None,
+        "--max-scope",
+        help="[8] Drop programs with more in-scope contracts than this — a 355-contract "
+        "scope cannot be covered solo.",
+    ),
+    fresh_scope: int | None = typer.Option(
+        None,
+        "--fresh-scope",
+        help="[9] Keep only programs that added an in-scope contract within this many days. "
+        "Scope added after the last audit priced it is the highest-yield surface.",
+    ),
+    # --- Criterion 10: technical edge ---
+    languages: str | None = typer.Option(
+        None,
+        "--languages",
+        help="[10] Comma-separated language filter (solidity,rust,move). Keeps programs "
+        "with at least one match.",
+    ),
+    # --- Criteria 11-12: competition and payout quality ---
+    no_kyc: bool = typer.Option(
+        False,
+        "--no-kyc",
+        help="[11] Only programs that do NOT require KYC (full-payout solo hunting).",
+    ),
+    exclude_boosted: bool = typer.Option(
+        False,
+        "--exclude-boosted",
+        help="[11] Drop Boosts / audit competitions — many researchers on the same scope at once.",
+    ),
+    require_vault: bool = typer.Option(
+        False,
+        "--require-vault",
+        help="[12] Only programs with an Immunefi Vault (payout funds escrowed on-chain).",
     ),
     cutoff: float = typer.Option(5.0, "--cutoff", help="Priority cutoff for inclusion in report."),
     cap: int = typer.Option(60, "--cap", help="Maximum candidates in report."),
@@ -212,6 +348,7 @@ def immunefi_scan(
     search, so a full pass can take a few minutes.
     """
     _setup_logging(log_level)
+    from tvl_scanner.enrich.immunefi_filter import ProgramFilter
     from tvl_scanner.pipeline import run_immunefi_scan
 
     s = settings()
@@ -221,27 +358,42 @@ def immunefi_scan(
         chain_list = None  # None → all supported chains
     _ = s  # settings loaded (validates .env) even though thresholds aren't overridden here
 
-    exclude_slugs = _resolve_exclude_slugs(exclude, exclude_slugs_file)
+    lang_set = (
+        {Language(x.strip().lower()) for x in languages.split(",") if x.strip()}
+        if languages
+        else None
+    )
+
+    filters = ProgramFilter(
+        include_closed=include_closed,
+        exclude_invite_only=exclude_invite_only,
+        exclude_slugs=_resolve_exclude_slugs(exclude, exclude_slugs_file),
+        min_tvl_usd=min_tvl,
+        min_max_bounty_usd=min_bounty,
+        min_critical_floor_usd=min_critical_floor,
+        min_payout_ratio_pct=min_payout_ratio,
+        updated_within_days=updated_within,
+        max_program_age_days=max_program_age,
+        max_known_issues=max_known_issues,
+        audit_older_than_days=audit_older_than,
+        min_scope_contracts=min_scope,
+        max_scope_contracts=max_scope,
+        fresh_scope_days=fresh_scope,
+        languages=lang_set,
+        kyc=False if no_kyc else None,
+        exclude_boosted=exclude_boosted,
+        require_vault=require_vault,
+        under_audited_only=under_audited_only,
+    )
 
     console.print(
         f"[bold cyan]tvl-scanner {__version__}[/]  immunefi-scan  "
         f"chains={'all' if chain_list is None else ', '.join(c.value for c in chain_list)}  "
-        f"{'no-kyc  ' if no_kyc else ''}"
-        f"{'no-iop  ' if exclude_invite_only else ''}"
-        f"{f'min_bounty=${min_bounty:,}  ' if min_bounty else ''}"
         f"cutoff={cutoff}  cap={cap}"
-        f"{f'  exclude={len(exclude_slugs)}' if exclude_slugs else ''}"
     )
+    console.print(f"[dim]filters: {_describe_filters(filters)}[/]")
     summary = asyncio.run(
-        run_immunefi_scan(
-            chain_list,
-            cutoff=cutoff,
-            cap=cap,
-            kyc=False if no_kyc else None,
-            min_bounty=min_bounty,
-            exclude_slugs=exclude_slugs or None,
-            exclude_invite_only=exclude_invite_only,
-        )
+        run_immunefi_scan(chain_list, cutoff=cutoff, cap=cap, filters=filters)
     )
     console.print(f"\n[bold green]✓ Immunefi-scan report written:[/] {summary}")
 

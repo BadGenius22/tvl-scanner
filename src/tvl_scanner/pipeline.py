@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from tvl_scanner.audit_check.checker import check_all, write_audit_status
 from tvl_scanner.discover.merge import discover_all, write_candidates
@@ -26,6 +27,9 @@ from tvl_scanner.http import make_client
 from tvl_scanner.models import Chain, EnrichedCandidate
 from tvl_scanner.rank.priority import rank_all
 from tvl_scanner.rank.report import write_report
+
+if TYPE_CHECKING:
+    from tvl_scanner.enrich.immunefi_filter import ProgramFilter
 
 log = logging.getLogger(__name__)
 
@@ -133,10 +137,7 @@ async def run_immunefi_scan(
     scan_date: date | None = None,
     cutoff: float = 5.0,
     cap: int = 60,
-    kyc: bool | None = None,
-    min_bounty: int | None = None,
-    exclude_slugs: set[str] | None = None,
-    exclude_invite_only: bool = False,
+    filters: ProgramFilter | None = None,
 ) -> Path:
     """Rank the FULL live Immunefi bounty universe on the 12 target-selection criteria.
 
@@ -154,25 +155,31 @@ async def run_immunefi_scan(
     size and how it is computed, program age and staleness, known-issue density,
     scope churn, competition and resolution quality. Writes
     reports/YYYY-MM-DD-immunefi-scan.md.
+
+    `filters` (see `enrich/immunefi_filter.ProgramFilter`) is applied before the
+    enrichment passes, so narrowing the scan also makes it cheaper. The funnel it
+    produces is logged and written into the report header, so a short candidate
+    list can always be traced back to the constraint that produced it.
     """
     from tvl_scanner.enrich.immunefi_catalog import discover_from_immunefi_catalog
+    from tvl_scanner.enrich.immunefi_filter import ProgramFilter
     from tvl_scanner.rank.bounty_priority import rank_all_bounty
 
     scan_date = scan_date or date.today()
+    filters = filters or ProgramFilter()
 
     log.info("=== Immunefi bounty-universe scan ===")
     async with make_client() as client:
-        candidates = await discover_from_immunefi_catalog(
+        candidates, funnel = await discover_from_immunefi_catalog(
             chains=chains,
             scan_date=scan_date,
             client=client,
-            kyc=kyc,
-            min_bounty=min_bounty,
+            filters=filters,
         )
     log.info("seeded %d candidates from the Immunefi catalogue", len(candidates))
 
     if not candidates:
-        log.warning("no Immunefi candidates — nothing to do")
+        log.warning("no Immunefi candidates survived the filters:\n%s", funnel.render())
         return Path("/dev/null")
 
     log.info("=== Stage 3: Audit-check ===")
@@ -181,16 +188,21 @@ async def run_immunefi_scan(
     n_under = sum(1 for a in audited if a.under_audited)
     log.info("audit-check: %d / %d are under-audited", n_under, len(audited))
 
+    # The one constraint that cannot run before enrichment: it needs Stage 3's
+    # resolved audit record, which is the whole point of Stage 3.
+    kept = []
+    for cand in audited:
+        reason = filters.audit_reject_reason(cand.under_audited)
+        if reason is not None:
+            funnel.drop(reason)
+            continue
+        kept.append(cand)
+
     log.info("=== Stage 4: Rank + Report (12-criteria bounty formula) ===")
-    ranked = rank_all_bounty(
-        audited,
-        scan_date=scan_date,
-        cutoff=cutoff,
-        cap=cap,
-        exclude_slugs=exclude_slugs,
-        exclude_invite_only=exclude_invite_only,
+    ranked = rank_all_bounty(kept, scan_date=scan_date, cutoff=cutoff, cap=cap)
+    summary_path, candidate_paths = write_report(
+        ranked, scan_date, label="immunefi-scan", filter_summary=funnel.render_markdown()
     )
-    summary_path, candidate_paths = write_report(ranked, scan_date, label="immunefi-scan")
     log.info(
         "ranked %d bounty candidates (cutoff=%.1f, cap=%d); wrote %d per-candidate files",
         len(ranked),

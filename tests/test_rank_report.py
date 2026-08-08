@@ -398,3 +398,39 @@ def test_run_records_carry_no_bounty_frontmatter_keys() -> None:
     fm = _frontmatter_dict(_record())
     assert "bounty_program_profile" not in fm
     assert "priority_subscores" not in fm
+
+
+def test_filter_funnel_lands_in_the_bounty_summary_header(tmp_path: Path) -> None:
+    """A short candidate list must be attributable to the filters that made it."""
+    summary, _ = write_report(
+        [_bounty_record()],
+        scan_date=date(2026, 4, 13),
+        reports_dir=tmp_path,
+        label="immunefi-scan",
+        filter_summary="**Filter funnel** — 247 programs fetched:\n\n- −59 program closed",
+    )
+    text = summary.read_text()
+    assert "**Filter funnel** — 247 programs fetched" in text
+    assert "−59 program closed" in text
+    # Placed above the table, so it is read before the shortlist is believed.
+    assert text.index("Filter funnel") < text.index("| Rank |")
+
+
+def test_empty_bounty_scan_still_shows_its_funnel(tmp_path: Path) -> None:
+    """Filtering everything out must not silently fall back to the discovery layout."""
+    summary, paths = write_report(
+        [],
+        scan_date=date(2026, 4, 13),
+        reports_dir=tmp_path,
+        label="immunefi-scan",
+        filter_summary="**Filter funnel** — 247 programs fetched:\n\n- −247 everything",
+    )
+    text = summary.read_text()
+    assert paths == []
+    assert "# Immunefi Bounty Scan" in text
+    assert "−247 everything" in text
+
+
+def test_run_reports_never_carry_a_funnel(tmp_path: Path) -> None:
+    summary, _ = write_report([_record()], scan_date=date(2026, 4, 13), reports_dir=tmp_path)
+    assert "Filter funnel" not in summary.read_text()

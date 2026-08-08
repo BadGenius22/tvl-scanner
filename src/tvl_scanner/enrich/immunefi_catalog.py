@@ -41,6 +41,11 @@ from tvl_scanner.enrich.homepage_scrape import (
     github_url_matches_protocol,
     scrape_homepage_with_fallback,
 )
+from tvl_scanner.enrich.immunefi_filter import (
+    REASON_NO_CHAIN,
+    FilterFunnel,
+    ProgramFilter,
+)
 from tvl_scanner.enrich.immunefi_profile import attach_payout_ratio, build_profile
 from tvl_scanner.enrich.onchain_tvl import measure_onchain_tvl
 from tvl_scanner.enrich.scope_audits import extract_scope_audit_sources
@@ -257,23 +262,22 @@ def _build_candidate(
     catalog: DefiLlamaCatalog,
     configured: set[Chain],
     scan_date: date,
-    *,
-    kyc: bool | None,
-    min_bounty: int | None,
 ) -> EnrichedCandidate | None:
-    """Map one Immunefi program to an EnrichedCandidate. None → skipped."""
+    """Map one Immunefi program to an EnrichedCandidate.
+
+    Returns None only when the program has no in-scope contract on a supported
+    chain — the one rejection that is a property of the *scanner's* coverage
+    rather than of the user's filters. Everything the user asked to filter on is
+    decided by `ProgramFilter` against the built candidate, so each drop can be
+    attributed to a named reason in the funnel instead of vanishing here.
+    """
     slug = str(program.get("slug") or "").strip()
     if not slug:
         return None
     project = str(program.get("project") or slug).strip()
 
-    if kyc is not None and bool(program.get("kyc")) != kyc:
-        return None
-
     max_bounty_raw = program.get("maxBounty")
     max_bounty = int(max_bounty_raw) if isinstance(max_bounty_raw, (int, float)) else None
-    if min_bounty is not None and (max_bounty or 0) < min_bounty:
-        return None
 
     chain, evm_addr, in_scope_count = _pick_scope(program, configured)
     if chain is None:
@@ -604,23 +608,33 @@ async def discover_from_immunefi_catalog(
     scan_date: date | None = None,
     client: httpx.AsyncClient | None = None,
     catalog: DefiLlamaCatalog | None = None,
-    kyc: bool | None = None,
-    min_bounty: int | None = None,
-) -> list[EnrichedCandidate]:
-    """Seed one EnrichedCandidate per active Immunefi program.
+    filters: ProgramFilter | None = None,
+) -> tuple[list[EnrichedCandidate], FilterFunnel]:
+    """Seed one EnrichedCandidate per Immunefi program, filtered before enrichment.
 
     `chains` restricts to those chains (default: every chain in the Chain enum —
     the whole point is to rank the FULL bounty universe, not the .env subset).
-    `kyc` filters to programs matching that KYC flag (None = both). `min_bounty`
-    drops programs whose max payout is below the floor.
+    `filters` is the user's target-selection constraints; the default
+    `ProgramFilter()` keeps everything except already-closed competitions.
+
+    The flow is deliberately build → filter → enrich. Building is pure and cheap,
+    so every program gets a candidate and a profile; filtering then runs against
+    those, which means each rejection has a named reason for the funnel AND the
+    expensive passes below (deploy dates, audits-folder probes, homepage scrapes,
+    on-chain TVL) only ever touch survivors.
+
+    Returns (candidates, funnel) — the funnel accounts for every program that did
+    not make it, so a three-candidate shortlist is always explainable.
     """
     scan_date = scan_date or date.today()
     configured = set(chains) if chains is not None else ALL_CHAINS
+    filters = filters or ProgramFilter()
 
     programs = await immunefi.fetch_raw(client=client)
+    funnel = FilterFunnel(fetched=len(programs))
     if not programs:
         log.warning("immunefi catalog: no programs fetched")
-        return []
+        return [], funnel
 
     if catalog is None:
         catalog = DefiLlamaCatalog()
@@ -628,22 +642,28 @@ async def discover_from_immunefi_catalog(
 
     results: list[EnrichedCandidate] = []
     scope_map: dict[str, list[str]] = {}
-    skipped_chain = 0
     for program in programs:
         try:
-            cand = _build_candidate(
-                program, catalog, configured, scan_date, kyc=kyc, min_bounty=min_bounty
-            )
+            cand = _build_candidate(program, catalog, configured, scan_date)
         except Exception as exc:  # one malformed program must not abort the scan
             log.warning("immunefi catalog: skipped %s: %s", program.get("slug"), exc)
+            funnel.drop(REASON_NO_CHAIN)
             continue
         if cand is None:
-            # Distinguish an unsupported-chain skip from a filter skip for the log.
-            if program.get("slug") and (kyc is None and min_bounty is None):
-                skipped_chain += 1
+            funnel.drop(REASON_NO_CHAIN)
+            continue
+        reason = filters.reject_reason(cand, scan_date=scan_date)
+        if reason is not None:
+            funnel.drop(reason)
             continue
         results.append(cand)
         scope_map[cand.target_name] = _scope_addresses(program, cand.chain)
+
+    log.info(
+        "immunefi catalog: %d/%d programs passed pre-enrichment filters",
+        len(results),
+        len(programs),
+    )
 
     await _resolve_deploy_dates(results, client)
     scope_hits = sum(1 for c in results if c.precomputed_audit_sources)
@@ -656,11 +676,17 @@ async def discover_from_immunefi_catalog(
     await _resolve_homepage_audits(results, client)
     await _resolve_onchain_tvl(results, scope_map, client)
 
-    log.info(
-        "immunefi catalog discovery: %d candidates from %d programs "
-        "(%d skipped: no in-scope contract on a supported chain)",
-        len(results),
-        len(programs),
-        skipped_chain,
-    )
-    return results
+    # TVL-dependent constraints run last: --min-tvl and --min-payout-ratio can
+    # only be judged once the DefiLlama match and the on-chain fallback have both
+    # had their turn, otherwise they would drop protocols for being unmeasured
+    # when the fallback was about to measure them.
+    kept: list[EnrichedCandidate] = []
+    for cand in results:
+        reason = filters.tvl_reject_reason(cand)
+        if reason is not None:
+            funnel.drop(reason)
+            continue
+        kept.append(cand)
+
+    log.info("immunefi catalog discovery funnel:\n%s", funnel.render())
+    return kept, funnel
