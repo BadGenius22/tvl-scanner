@@ -330,18 +330,24 @@ def test_exclude_pay_to_submit() -> None:
     assert _reject(_cand(), exclude_pay_to_submit=True) is None
 
 
-def test_exclude_premium_matches_any_subscription_tier() -> None:
-    for tier in ("Essential", "Pro", "Elite"):
-        assert _reject(_cand(subscription_plan=tier), exclude_premium=True) == f.REASON_PREMIUM
-    assert _reject(_cand(), exclude_premium=True) is None
+def test_exclude_level_gated() -> None:
+    gated = _cand(researcher_level_gate="reports from researchers at the Intermediate level or higher")
+    assert _reject(gated) is None
+    assert _reject(gated, exclude_level_gated=True) == f.REASON_LEVEL_GATED
+    assert _reject(_cand(), exclude_level_gated=True) is None
 
 
-def test_pay_to_submit_and_premium_are_independent() -> None:
-    """20 of 28 pay-to-submit programs also carry a plan; the flags must not conflate."""
+def test_level_gate_and_fee_are_independent_barriers() -> None:
+    """Same barrier seen two ways: one is prose (low recall), one is a feature flag."""
     fee_only = _cand(pay_to_submit=True)
-    plan_only = _cand(subscription_plan="Elite")
-    assert _reject(fee_only, exclude_premium=True) is None
-    assert _reject(plan_only, exclude_pay_to_submit=True) is None
-    both = _cand(pay_to_submit=True, subscription_plan="Elite")
+    gate_only = _cand(researcher_level_gate="Intermediate level or higher")
+    assert _reject(fee_only, exclude_level_gated=True) is None
+    assert _reject(gate_only, exclude_pay_to_submit=True) is None
+    both = _cand(pay_to_submit=True, researcher_level_gate="Intermediate level or higher")
     assert _reject(both, exclude_pay_to_submit=True) == f.REASON_PAY_TO_SUBMIT
-    assert _reject(both, exclude_premium=True) == f.REASON_PREMIUM
+    assert _reject(both, exclude_level_gated=True) == f.REASON_LEVEL_GATED
+
+
+def test_subscription_plan_is_not_a_filter() -> None:
+    """A paid PROJECT tier says nothing about whether you may submit."""
+    assert _reject(_cand(subscription_plan="Elite"), exclude_level_gated=True) is None

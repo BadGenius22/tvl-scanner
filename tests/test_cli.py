@@ -153,13 +153,13 @@ def test_describe_filters_calls_out_included_closed_programs() -> None:
     assert "including CLOSED programs" in _describe_filters(ProgramFilter(include_closed=True))
 
 
-def test_pay_to_submit_and_premium_flags_reach_the_filter() -> None:
+def test_submission_barrier_flags_reach_the_filter() -> None:
     result = CliRunner().invoke(
-        app, ["immunefi-scan", "--exclude-pay-to-submit", "--exclude-premium"]
+        app, ["immunefi-scan", "--exclude-pay-to-submit", "--exclude-level-gated"]
     )
     assert result.exit_code == 0, result.output
     captured = _captured_filters()
     assert captured.exclude_pay_to_submit is True
-    assert captured.exclude_premium is True
+    assert captured.exclude_level_gated is True
     assert "no-pay-to-submit" in _describe_filters(captured)
-    assert "no-premium" in _describe_filters(captured)
+    assert "no-level-gated" in _describe_filters(captured)

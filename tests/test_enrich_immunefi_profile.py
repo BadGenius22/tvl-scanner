@@ -463,3 +463,49 @@ def test_subscription_label_without_a_tier_is_kept_whole() -> None:
 
 def test_no_subscription_plan_is_none() -> None:
     assert build_profile(_program(features=["Vault"]), scan_date=SCAN).subscription_plan is None
+
+
+# --- Researcher-level submission gate (prose-detected) ---------------------
+
+
+def test_level_gate_detected_in_program_prose() -> None:
+    """Verbatim from Alchemix, the only program stating it in the 2026-08 snapshot."""
+    p = build_profile(
+        _program(
+            programOverview=(
+                "Due to the high complexity of our architecture, we are currently focusing "
+                "our review bandwidth on reports from researchers at the **Intermediate** "
+                "level or higher. If you are at a **Novice** or **Junior** level, level up first."
+            )
+        ),
+        scan_date=SCAN,
+    )
+    assert p.researcher_level_gate is not None
+    assert "Intermediate level or higher" in p.researcher_level_gate
+    # Markdown emphasis stripped so the quote reads cleanly in a report.
+    assert "**" not in p.researcher_level_gate
+
+
+def test_defi_junior_senior_tranches_are_not_a_level_gate() -> None:
+    """Royco and Strata describe junior/senior *tranches* — the trap this must not hit."""
+    for prose in (
+        "Its smart contracts divide yield opportunities into senior and junior tranches. "
+        "The junior tranche serves as first-loss capital and receives a risk premium.",
+        "Each tranche (Junior and Senior) is seeded with at least 10 assets at deployment. "
+        "PoCs must initialize both tranches.",
+    ):
+        assert build_profile(_program(programOverview=prose), scan_date=SCAN).researcher_level_gate is None
+
+
+def test_level_gate_requires_all_three_signals() -> None:
+    """A level name alone, or 'level' alone, must not trip the detector."""
+    for prose in (
+        "Our senior engineers reviewed the code.",  # level name, no "level", no researcher
+        "The contract tracks a level variable for each vault.",  # "level", no name
+        "Novice traders should read the docs.",  # name, no "level", no researcher context
+    ):
+        assert build_profile(_program(programOverview=prose), scan_date=SCAN).researcher_level_gate is None
+
+
+def test_no_level_gate_is_none() -> None:
+    assert build_profile(_program(), scan_date=SCAN).researcher_level_gate is None

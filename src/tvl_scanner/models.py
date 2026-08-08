@@ -223,8 +223,20 @@ class BountyProfile(BaseModel):
         description=(
             "The project's paid Immunefi tier (Essential / Pro / Elite), parsed from "
             "the 'Subscription Plan: X' feature label. This is what the PROJECT pays "
-            "Immunefi, not a researcher-facing gate — exposed for filtering only, and "
+            "Immunefi, not a researcher-facing gate — exposed as context only, and "
             "deliberately left out of scoring."
+        ),
+    )
+    researcher_level_gate: str | None = Field(
+        default=None,
+        description=(
+            "Verbatim sentence where the program restricts submissions by Immunefi "
+            "researcher level (Novice / Junior / Intermediate / …). Stored as the "
+            "quote rather than a bool because whether the gate blocks YOU depends on "
+            "your own level, which the scanner cannot know — so the record shows the "
+            "claim and lets the reader decide. LOW RECALL by nature: the public "
+            "catalogue has no structured field for this, so it is only found when a "
+            "program happens to state it in prose."
         ),
     )
     immunefi_standard: bool = False

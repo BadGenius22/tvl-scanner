@@ -35,6 +35,7 @@ malformed field, because one odd program must never abort a 247-program scan.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, date, datetime
 from typing import Any
 
@@ -251,6 +252,59 @@ def _critical_impacts(program: dict[str, Any]) -> list[str]:
     return out
 
 
+# Immunefi researcher levels. Some programs will only review reports from
+# researchers at or above a given level — everyone below either cannot submit
+# or must pay the per-report fee. Immunefi exposes this NOWHERE in the public
+# catalogue's structured fields, so it has to be read out of the program prose.
+_LEVEL_NAMES = r"novice|junior|associate|intermediate|advanced|senior|expert|elite"
+
+# All three conditions must hold in the SAME sentence:
+#   1. an Immunefi level name
+#   2. the literal word "level" / "levels" / "levelled up"
+#   3. a researcher-facing word (report, submit, researcher, ...)
+# Condition 2 is what makes this safe. "Junior" and "Senior" are also DeFi
+# tranche names — Royco and Strata both describe junior/senior tranches at
+# length — and those sentences never say "level", so they cannot match.
+_LEVEL_TOKEN_RE = re.compile(r"\blevel(?:s|led|ed)?\b", re.I)
+_LEVEL_NAME_RE = re.compile(rf"\b(?:{_LEVEL_NAMES})\b", re.I)
+_RESEARCHER_RE = re.compile(
+    r"\b(?:researcher|whitehat|white-hat|hunter|submit\w*|submission|report)\w*\b", re.I
+)
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+# Prose fields worth reading, in the order a gate is most likely to be stated.
+_LEVEL_GATE_FIELDS = ("programOverview", "description", "rewardsBody", "outOfScopeAndRules")
+
+# Longest gate excerpt retained — enough to judge the gate without the essay.
+_LEVEL_GATE_CHARS = 300
+
+
+def _detect_level_gate(program: dict[str, Any]) -> str | None:
+    """Find a researcher-level submission gate stated in the program's prose.
+
+    Returns the sentence as evidence rather than a bare bool: whether a gate
+    blocks *you* depends on your own Immunefi level, which the scanner cannot
+    know, so the record must show the claim and let the reader decide.
+    """
+    for field in _LEVEL_GATE_FIELDS:
+        text = program.get(field)
+        if not isinstance(text, str) or not text:
+            continue
+        for sentence in _SENTENCE_SPLIT_RE.split(text):
+            if not _LEVEL_TOKEN_RE.search(sentence):
+                continue
+            if not _LEVEL_NAME_RE.search(sentence):
+                continue
+            if not _RESEARCHER_RE.search(sentence):
+                continue
+            # Strip markdown emphasis so the excerpt reads cleanly in a report.
+            cleaned = re.sub(r"[*_`]+", "", sentence).strip()
+            cleaned = re.sub(r"\s+", " ", cleaned)
+            if cleaned:
+                return cleaned[:_LEVEL_GATE_CHARS]
+    return None
+
+
 def _subscription_plan(features: list[str]) -> str | None:
     """The project's Immunefi tier from a 'Subscription Plan: X' feature label.
 
@@ -398,6 +452,7 @@ def build_profile(program: dict[str, Any], *, scan_date: date) -> BountyProfile:
         invite_only=bool(program.get("inviteOnly")) or _has("invite only"),
         pay_to_submit=_has(_FEATURE_PAY_TO_SUBMIT),
         subscription_plan=_subscription_plan(features),
+        researcher_level_gate=_detect_level_gate(program),
         immunefi_standard=bool(program.get("immunefiStandard")),
         is_boosted=any(_has(m) for m in _FEATURE_BOOSTED) or bool(program.get("rewardsPool")),
         boosted_researcher_count=researchers,

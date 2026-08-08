@@ -306,6 +306,14 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
             "spending research time."
         )
         lines.append("")
+    if p.researcher_level_gate:
+        # Same class of blocker as invite-only, so it gets the same top-of-record
+        # treatment: whether you can submit at all decides everything below it.
+        lines.append(
+            "> ⚠ **RESEARCHER-LEVEL GATE.** This program limits who may submit, in its own "
+            f"words: “{p.researcher_level_gate}” Check your Immunefi level before starting."
+        )
+        lines.append("")
 
     # 1. Funds at risk
     lines.append("### 1. Funds at risk")
@@ -506,6 +514,11 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
         signals.append(
             "⚠ Pay to Submit — you are charged a fee per report, win or lose "
             "(also thins the field, so it helps the crowding score and hurts the payout score)"
+        )
+    if p.researcher_level_gate:
+        signals.append(
+            f"⚠ **Researcher-level gate** — the program states: “{p.researcher_level_gate}” "
+            "Confirm your own Immunefi level clears it before spending any time here."
         )
     if p.immunefi_standard:
         signals.append("Immunefi Standard scope (easy to pick up cold)")

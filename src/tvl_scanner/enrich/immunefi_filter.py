@@ -60,7 +60,7 @@ REASON_SCOPE_STALE = "--fresh-scope: no contracts added to scope recently"
 REASON_LANGUAGE = "--languages: no matching language"
 REASON_BOOSTED = "--exclude-boosted: live boost / competition"
 REASON_PAY_TO_SUBMIT = "--exclude-pay-to-submit: charges a fee per report"
-REASON_PREMIUM = "--exclude-premium: project is on a paid Immunefi subscription plan"
+REASON_LEVEL_GATED = "--exclude-level-gated: restricts submissions by researcher level"
 REASON_NO_VAULT = "--require-vault: no escrowed payout vault"
 REASON_TVL_UNKNOWN = "--min-tvl: TVL unresolved"
 REASON_TVL_LOW = "--min-tvl: TVL below floor"
@@ -91,7 +91,7 @@ REASON_ORDER: tuple[str, ...] = (
     REASON_LANGUAGE,
     REASON_BOOSTED,
     REASON_PAY_TO_SUBMIT,
-    REASON_PREMIUM,
+    REASON_LEVEL_GATED,
     REASON_NO_VAULT,
     REASON_TVL_UNKNOWN,
     REASON_TVL_LOW,
@@ -178,15 +178,16 @@ class ProgramFilter(BaseModel):
             "report. 28 of 247 live programs carry it."
         ),
     )
-    exclude_premium: bool = Field(
+    exclude_level_gated: bool = Field(
         default=False,
         description=(
-            "Drop programs whose PROJECT is on a paid Immunefi subscription plan "
-            "(Essential / Pro / Elite) — 52 of 247 live programs. Immunefi publishes "
-            "no field called 'premium'; the subscription tier is the closest real "
-            "concept, and it is a property of what the project buys from Immunefi, "
-            "not a researcher-facing gate. Use --exclude-pay-to-submit for the fee "
-            "that actually lands on you; 20 programs carry both."
+            "Drop programs that restrict submissions by Immunefi researcher level "
+            "(e.g. Alchemix: 'reports from researchers at the Intermediate level or "
+            "higher'). LOW RECALL — the public catalogue exposes no structured field "
+            "for level gating, so this only fires when a program states it in prose "
+            "(1 of 247 in the 2026-08 snapshot). --exclude-pay-to-submit is the "
+            "higher-recall proxy for the same barrier: 28 programs charge a per-report "
+            "fee, which is what a below-threshold researcher pays instead."
         ),
     )
     require_vault: bool = False
@@ -238,8 +239,8 @@ class ProgramFilter(BaseModel):
             return REASON_BOOSTED
         if self.exclude_pay_to_submit and p.pay_to_submit:
             return REASON_PAY_TO_SUBMIT
-        if self.exclude_premium and p.subscription_plan:
-            return REASON_PREMIUM
+        if self.exclude_level_gated and p.researcher_level_gate:
+            return REASON_LEVEL_GATED
 
         # --- 2. Bounty size ---
         if self.min_max_bounty_usd is not None:

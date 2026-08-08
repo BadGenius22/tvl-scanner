@@ -512,3 +512,11 @@ def test_subscription_tier_is_deliberately_unscored() -> None:
     elite = _profile(max_bounty_usd=250_000, subscription_plan="Elite")
     assert competition_score(elite) == competition_score(plain)
     assert resolution_quality_score(elite) == resolution_quality_score(plain)
+
+
+def test_researcher_level_gate_is_flagged_not_scored() -> None:
+    """Whether a level gate blocks YOU depends on your level, which is unknowable here."""
+    plain = _profile(max_bounty_usd=250_000)
+    gated = _profile(max_bounty_usd=250_000, researcher_level_gate="Intermediate level or higher")
+    assert competition_score(gated) == competition_score(plain)
+    assert resolution_quality_score(gated) == resolution_quality_score(plain)

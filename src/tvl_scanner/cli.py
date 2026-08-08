@@ -120,7 +120,7 @@ def _describe_filters(filters: ProgramFilter) -> str:
         (filters.exclude_invite_only, "no-invite-only"),
         (filters.exclude_boosted, "no-boosted"),
         (filters.exclude_pay_to_submit, "no-pay-to-submit"),
-        (filters.exclude_premium, "no-premium"),
+        (filters.exclude_level_gated, "no-level-gated"),
         (filters.require_vault, "vault-only"),
         (filters.under_audited_only, "under-audited-only"),
     ):
@@ -320,13 +320,13 @@ def immunefi_scan(
         help="[12] Drop 'Pay to Submit' programs, which charge you a fee per report "
         "regardless of outcome (28 of 247 live programs).",
     ),
-    exclude_premium: bool = typer.Option(
+    exclude_level_gated: bool = typer.Option(
         False,
-        "--exclude-premium",
-        help="[12] Drop programs whose PROJECT is on a paid Immunefi subscription plan "
-        "(Essential/Pro/Elite; 52 of 247). Immunefi publishes no 'premium' field — this "
-        "is the closest real concept, and it describes what the project buys, not a gate "
-        "on you. For the fee that lands on you, use --exclude-pay-to-submit.",
+        "--exclude-level-gated",
+        help="[11] Drop programs that only accept reports from researchers above a given "
+        "Immunefi level. LOW RECALL: no structured field exists, so this only catches "
+        "programs that say so in prose (1 of 247). Pair it with --exclude-pay-to-submit, "
+        "the higher-recall proxy for the same barrier.",
     ),
     require_vault: bool = typer.Option(
         False,
@@ -399,7 +399,7 @@ def immunefi_scan(
         kyc=False if no_kyc else None,
         exclude_boosted=exclude_boosted,
         exclude_pay_to_submit=exclude_pay_to_submit,
-        exclude_premium=exclude_premium,
+        exclude_level_gated=exclude_level_gated,
         require_vault=require_vault,
         under_audited_only=under_audited_only,
     )
