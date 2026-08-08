@@ -59,6 +59,8 @@ REASON_SCOPE_STALE_UNKNOWN = "--fresh-scope: no scope-addition dates published"
 REASON_SCOPE_STALE = "--fresh-scope: no contracts added to scope recently"
 REASON_LANGUAGE = "--languages: no matching language"
 REASON_BOOSTED = "--exclude-boosted: live boost / competition"
+REASON_PAY_TO_SUBMIT = "--exclude-pay-to-submit: charges a fee per report"
+REASON_PREMIUM = "--exclude-premium: project is on a paid Immunefi subscription plan"
 REASON_NO_VAULT = "--require-vault: no escrowed payout vault"
 REASON_TVL_UNKNOWN = "--min-tvl: TVL unresolved"
 REASON_TVL_LOW = "--min-tvl: TVL below floor"
@@ -88,6 +90,8 @@ REASON_ORDER: tuple[str, ...] = (
     REASON_SCOPE_STALE,
     REASON_LANGUAGE,
     REASON_BOOSTED,
+    REASON_PAY_TO_SUBMIT,
+    REASON_PREMIUM,
     REASON_NO_VAULT,
     REASON_TVL_UNKNOWN,
     REASON_TVL_LOW,
@@ -167,6 +171,24 @@ class ProgramFilter(BaseModel):
     # --- 11-12. Competition and payout quality ---
     kyc: bool | None = None
     exclude_boosted: bool = False
+    exclude_pay_to_submit: bool = Field(
+        default=False,
+        description=(
+            "Drop 'Pay to Submit' programs, which charge the researcher a fee per "
+            "report. 28 of 247 live programs carry it."
+        ),
+    )
+    exclude_premium: bool = Field(
+        default=False,
+        description=(
+            "Drop programs whose PROJECT is on a paid Immunefi subscription plan "
+            "(Essential / Pro / Elite) — 52 of 247 live programs. Immunefi publishes "
+            "no field called 'premium'; the subscription tier is the closest real "
+            "concept, and it is a property of what the project buys from Immunefi, "
+            "not a researcher-facing gate. Use --exclude-pay-to-submit for the fee "
+            "that actually lands on you; 20 programs carry both."
+        ),
+    )
     require_vault: bool = False
 
     # --- Post-Stage-3 (needs the resolved audit record) ---
@@ -214,6 +236,10 @@ class ProgramFilter(BaseModel):
             return REASON_KYC
         if self.exclude_boosted and p.is_boosted:
             return REASON_BOOSTED
+        if self.exclude_pay_to_submit and p.pay_to_submit:
+            return REASON_PAY_TO_SUBMIT
+        if self.exclude_premium and p.subscription_plan:
+            return REASON_PREMIUM
 
         # --- 2. Bounty size ---
         if self.min_max_bounty_usd is not None:

@@ -426,10 +426,17 @@ def competition_score(profile: BountyProfile | None) -> float:
       - headline max > $1M     -2, every hunter's shortlist starts there
       - headline max < $50K    +1, too small to attract a crowd
       - KYC required           +1.5, a real deterrent for a slice of the field
+      - Pay to Submit          +1.0, a per-report fee prices out speculative
+                               submissions and thins the field (the same feature
+                               costs the program points on criterion 12, where it
+                               is a cost shifted onto the researcher — it really
+                               does cut both ways)
       - Immunefi Standard      -0.5, standardised scope is easier to pick up cold
 
     Program age is deliberately NOT folded in here — criterion 5 already scores
-    it, and double-counting would let one signal drive two weights.
+    it, and double-counting would let one signal drive two weights. The project's
+    subscription tier is likewise left out: it describes what the project buys
+    from Immunefi, not how many researchers are competing.
     """
     if profile is None:
         return NEUTRAL
@@ -450,6 +457,8 @@ def competition_score(profile: BountyProfile | None) -> float:
 
     if profile.kyc_required:
         score += 1.5
+    if profile.pay_to_submit:
+        score += 1.0
     if profile.immunefi_standard:
         score -= 0.5
     return _clamp(score)
@@ -467,9 +476,15 @@ def resolution_quality_score(profile: BountyProfile | None) -> float:
     leaderboard: money already paid to named researchers. Everything else is
     policy — escrowed Vault funds, a signed Safe Harbor, available arbitration,
     a responsible-publication commitment — so those move the score in smaller
-    steps from neutral. "Pay to Mediate - No Free Mediations" is the one entry
-    that subtracts: it puts the cost of contesting a triage decision on the
-    researcher.
+    steps from neutral.
+
+    Two entries subtract, both for the same reason: they move a cost off the
+    program and onto the researcher. "Pay to Mediate - No Free Mediations" makes
+    you pay to contest a triage decision; "Pay to Submit" charges you per report,
+    win or lose, which is the harsher of the two because it lands on every
+    submission rather than only on disputes. (The same fee *helps* on criterion
+    11, where it thins the field — the two effects are real and opposite, so
+    each is scored where it belongs rather than netted into one number.)
     """
     if profile is None:
         return NEUTRAL
@@ -499,6 +514,8 @@ def resolution_quality_score(profile: BountyProfile | None) -> float:
         score += 0.5
     if profile.no_free_mediation:
         score -= 1.5
+    if profile.pay_to_submit:
+        score -= 2.0
     if profile.managed_triage:
         score += 0.5
     if profile.immunefi_standard:

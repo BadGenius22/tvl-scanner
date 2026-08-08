@@ -56,6 +56,11 @@ _FEATURE_ARBITRATION = "arbitration"
 _FEATURE_VAULT = "vault"
 _FEATURE_PAY_TO_MEDIATE = "pay to mediate"
 _FEATURE_NO_FREE_MEDIATION = "no free mediation"
+_FEATURE_PAY_TO_SUBMIT = "pay to submit"
+# "Subscription Plan: Elite" → the project's paid Immunefi tier. Note this is a
+# PREFIX match with the tier taken from after the colon, because Immunefi adds
+# tiers without notice (Pro appeared after Essential and Elite).
+_FEATURE_SUBSCRIPTION = "subscription plan"
 
 # An asset added within this window is treated as fresh scope for criterion 9.
 RECENT_ASSET_WINDOW_DAYS = 90
@@ -246,6 +251,19 @@ def _critical_impacts(program: dict[str, Any]) -> list[str]:
     return out
 
 
+def _subscription_plan(features: list[str]) -> str | None:
+    """The project's Immunefi tier from a 'Subscription Plan: X' feature label.
+
+    Returns just the tier ("Elite"), or the whole label when it carries no colon
+    so an unrecognised future shape is surfaced rather than silently dropped.
+    """
+    for feature in features:
+        if _FEATURE_SUBSCRIPTION in feature.lower():
+            _, sep, tier = feature.partition(":")
+            return tier.strip() if sep and tier.strip() else feature.strip()
+    return None
+
+
 def _leaderboard_stats(program: dict[str, Any]) -> tuple[int, int]:
     """(paid researcher count, total USD paid) from a boosted program's leaderboard.
 
@@ -378,6 +396,8 @@ def build_profile(program: dict[str, Any], *, scan_date: date) -> BountyProfile:
         # 11. Likely researcher competition
         kyc_required=bool(program.get("kyc")),
         invite_only=bool(program.get("inviteOnly")) or _has("invite only"),
+        pay_to_submit=_has(_FEATURE_PAY_TO_SUBMIT),
+        subscription_plan=_subscription_plan(features),
         immunefi_standard=bool(program.get("immunefiStandard")),
         is_boosted=any(_has(m) for m in _FEATURE_BOOSTED) or bool(program.get("rewardsPool")),
         boosted_researcher_count=researchers,

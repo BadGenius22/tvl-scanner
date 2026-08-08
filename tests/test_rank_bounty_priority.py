@@ -493,3 +493,22 @@ def test_reward_tier_round_trips_through_model_dump() -> None:
     record = rank_candidate_bounty(candidate, scan_date=SCAN)
     assert record.bounty_profile is not None
     assert record.bounty_profile.reward_tiers[0].severity == "critical"
+
+
+def test_pay_to_submit_scores_opposite_ways_on_11_and_12() -> None:
+    """A per-report fee thins the field (good) and costs the researcher (bad).
+
+    Netting them into one number would hide both; each is scored where it belongs.
+    """
+    plain = _profile(max_bounty_usd=250_000)
+    fee = _profile(max_bounty_usd=250_000, pay_to_submit=True)
+    assert competition_score(fee) > competition_score(plain)
+    assert resolution_quality_score(fee) < resolution_quality_score(plain)
+
+
+def test_subscription_tier_is_deliberately_unscored() -> None:
+    """It describes what the project buys from Immunefi, not the hunt."""
+    plain = _profile(max_bounty_usd=250_000)
+    elite = _profile(max_bounty_usd=250_000, subscription_plan="Elite")
+    assert competition_score(elite) == competition_score(plain)
+    assert resolution_quality_score(elite) == resolution_quality_score(plain)

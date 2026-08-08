@@ -432,3 +432,34 @@ def test_wrong_typed_sections_are_skipped_not_fatal() -> None:
     assert p.ecosystems == []
     # A bare string `features` is still usable — normalized to a one-item list.
     assert p.vault_escrow is True
+
+
+# --- Pay to Submit / subscription tier -------------------------------------
+
+
+def test_pay_to_submit_detected() -> None:
+    assert build_profile(_program(features=["Pay to Submit"]), scan_date=SCAN).pay_to_submit
+    assert not build_profile(_program(), scan_date=SCAN).pay_to_submit
+    # Must not be confused with the (much more common) mediation fee.
+    assert not build_profile(
+        _program(features=["Pay to Mediate"]), scan_date=SCAN
+    ).pay_to_submit
+
+
+def test_subscription_tier_is_parsed_from_the_label() -> None:
+    for label, tier in (
+        ("Subscription Plan: Elite", "Elite"),
+        ("Subscription Plan: Pro", "Pro"),
+        ("Subscription Plan: Essential", "Essential"),
+    ):
+        assert build_profile(_program(features=[label]), scan_date=SCAN).subscription_plan == tier
+
+
+def test_subscription_label_without_a_tier_is_kept_whole() -> None:
+    """An unrecognised future shape must surface, not silently vanish."""
+    p = build_profile(_program(features=["Subscription Plan"]), scan_date=SCAN)
+    assert p.subscription_plan == "Subscription Plan"
+
+
+def test_no_subscription_plan_is_none() -> None:
+    assert build_profile(_program(features=["Vault"]), scan_date=SCAN).subscription_plan is None

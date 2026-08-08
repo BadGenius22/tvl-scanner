@@ -119,6 +119,8 @@ def _describe_filters(filters: ProgramFilter) -> str:
     for flag, label in (
         (filters.exclude_invite_only, "no-invite-only"),
         (filters.exclude_boosted, "no-boosted"),
+        (filters.exclude_pay_to_submit, "no-pay-to-submit"),
+        (filters.exclude_premium, "no-premium"),
         (filters.require_vault, "vault-only"),
         (filters.under_audited_only, "under-audited-only"),
     ):
@@ -312,6 +314,20 @@ def immunefi_scan(
         "--exclude-boosted",
         help="[11] Drop Boosts / audit competitions — many researchers on the same scope at once.",
     ),
+    exclude_pay_to_submit: bool = typer.Option(
+        False,
+        "--exclude-pay-to-submit",
+        help="[12] Drop 'Pay to Submit' programs, which charge you a fee per report "
+        "regardless of outcome (28 of 247 live programs).",
+    ),
+    exclude_premium: bool = typer.Option(
+        False,
+        "--exclude-premium",
+        help="[12] Drop programs whose PROJECT is on a paid Immunefi subscription plan "
+        "(Essential/Pro/Elite; 52 of 247). Immunefi publishes no 'premium' field — this "
+        "is the closest real concept, and it describes what the project buys, not a gate "
+        "on you. For the fee that lands on you, use --exclude-pay-to-submit.",
+    ),
     require_vault: bool = typer.Option(
         False,
         "--require-vault",
@@ -382,6 +398,8 @@ def immunefi_scan(
         languages=lang_set,
         kyc=False if no_kyc else None,
         exclude_boosted=exclude_boosted,
+        exclude_pay_to_submit=exclude_pay_to_submit,
+        exclude_premium=exclude_premium,
         require_vault=require_vault,
         under_audited_only=under_audited_only,
     )

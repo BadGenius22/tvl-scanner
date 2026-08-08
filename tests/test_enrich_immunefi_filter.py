@@ -318,3 +318,30 @@ def test_funnel_markdown_is_report_ready() -> None:
 
 def test_funnel_markdown_says_so_when_nothing_was_filtered() -> None:
     assert "no filter removed anything" in FilterFunnel(fetched=12).render_markdown()
+
+
+# --- Pay to Submit / premium -----------------------------------------------
+
+
+def test_exclude_pay_to_submit() -> None:
+    fee = _cand(pay_to_submit=True)
+    assert _reject(fee) is None
+    assert _reject(fee, exclude_pay_to_submit=True) == f.REASON_PAY_TO_SUBMIT
+    assert _reject(_cand(), exclude_pay_to_submit=True) is None
+
+
+def test_exclude_premium_matches_any_subscription_tier() -> None:
+    for tier in ("Essential", "Pro", "Elite"):
+        assert _reject(_cand(subscription_plan=tier), exclude_premium=True) == f.REASON_PREMIUM
+    assert _reject(_cand(), exclude_premium=True) is None
+
+
+def test_pay_to_submit_and_premium_are_independent() -> None:
+    """20 of 28 pay-to-submit programs also carry a plan; the flags must not conflate."""
+    fee_only = _cand(pay_to_submit=True)
+    plan_only = _cand(subscription_plan="Elite")
+    assert _reject(fee_only, exclude_premium=True) is None
+    assert _reject(plan_only, exclude_pay_to_submit=True) is None
+    both = _cand(pay_to_submit=True, subscription_plan="Elite")
+    assert _reject(both, exclude_pay_to_submit=True) == f.REASON_PAY_TO_SUBMIT
+    assert _reject(both, exclude_premium=True) == f.REASON_PREMIUM

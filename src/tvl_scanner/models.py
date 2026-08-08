@@ -210,6 +210,23 @@ class BountyProfile(BaseModel):
     # --- 11. Likely researcher competition ---
     kyc_required: bool = False
     invite_only: bool = False
+    pay_to_submit: bool = Field(
+        default=False,
+        description=(
+            "Immunefi 'Pay to Submit': the researcher pays a fee per report. Cuts "
+            "both ways — a real cost shifted onto you, but also a spam filter that "
+            "thins the field, so it is scored on both criterion 11 and 12."
+        ),
+    )
+    subscription_plan: str | None = Field(
+        default=None,
+        description=(
+            "The project's paid Immunefi tier (Essential / Pro / Elite), parsed from "
+            "the 'Subscription Plan: X' feature label. This is what the PROJECT pays "
+            "Immunefi, not a researcher-facing gate — exposed for filtering only, and "
+            "deliberately left out of scoring."
+        ),
+    )
     immunefi_standard: bool = False
     is_boosted: bool = Field(
         default=False, description="Boost / Attackathon / audit competition — many eyes, at once"

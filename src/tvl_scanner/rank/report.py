@@ -502,6 +502,11 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
         signals.append("$1M+ headline payout — on every hunter's shortlist")
     if p.kyc_required:
         signals.append("KYC required (deters part of the field)")
+    if p.pay_to_submit:
+        signals.append(
+            "⚠ Pay to Submit — you are charged a fee per report, win or lose "
+            "(also thins the field, so it helps the crowding score and hurts the payout score)"
+        )
     if p.immunefi_standard:
         signals.append("Immunefi Standard scope (easy to pick up cold)")
     lines.append(
@@ -531,6 +536,18 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
         lines.append("- **Safe Harbor documents signed** — defined legal cover for whitehat action.")
     if p.arbitration_available:
         lines.append("- **Arbitration available** — triage decisions can be independently contested.")
+    if p.pay_to_submit:
+        lines.append(
+            "- ⚠ **Pay to Submit** — a fee is charged per report regardless of outcome. "
+            "Price that into every speculative submission, not just the ones you expect "
+            "to be disputed."
+        )
+    if p.subscription_plan:
+        lines.append(
+            f"- **Project subscription tier**: {p.subscription_plan} — what the project "
+            "pays Immunefi. Usually means a more serviced program (triage, mediation), "
+            "not a researcher-facing gate."
+        )
     if p.no_free_mediation:
         lines.append(
             "- ⚠ **No free mediations** — contesting a triage decision costs the researcher. "
@@ -552,6 +569,8 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
             p.safe_harbor,
             p.arbitration_available,
             p.pay_to_mediate,
+            p.pay_to_submit,
+            p.subscription_plan,
             p.responsible_publication_category,
             p.managed_triage,
         )
