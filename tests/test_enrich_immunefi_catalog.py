@@ -226,3 +226,87 @@ async def test_discover_skips_unsupported_and_resolves_deploy_date() -> None:
 async def test_discover_empty_catalogue_returns_empty() -> None:
     with patch("tvl_scanner.enrich.immunefi.fetch_raw", new=AsyncMock(return_value=[])):
         assert await discover_from_immunefi_catalog(catalog=_catalog([])) == []
+
+
+# ---- Bounty program profile attachment (12-criteria rubric) ----
+
+
+def test_build_candidate_attaches_the_bounty_profile() -> None:
+    program = _program(
+        max_bounty=250_000,
+        launch="2026-02-17T10:24:00.000Z",
+        assets=[
+            {
+                "type": "smart_contract",
+                "url": f"https://etherscan.io/address/{EVM}#code",
+                "addedAt": "2026-03-20T00:00:00.000Z",
+                "revision": 1,
+            }
+        ],
+    )
+    program.update(
+        {
+            "updatedDate": "2026-04-01T00:00:00.000Z",
+            "rewards": [
+                {
+                    "severity": "critical",
+                    "assetType": "smart_contract",
+                    "rewardModel": "range",
+                    "minReward": 50_000,
+                    "maxReward": 250_000,
+                    "rewardCalculationPercentage": 10,
+                }
+            ],
+            "knownIssues": [{"description": "Known rounding drift."}],
+        }
+    )
+    cand = _build_candidate(
+        program, _catalog([]), ALL, date(2026, 4, 13), kyc=None, min_bounty=None
+    )
+
+    assert cand is not None
+    profile = cand.bounty_profile
+    assert profile is not None
+    assert profile.max_bounty_usd == 250_000
+    assert profile.critical_min_usd == 50_000
+    assert profile.program_age_days == 55
+    assert profile.days_since_program_update == 12
+    assert profile.known_issue_count == 1
+    assert profile.smart_contract_assets == 1
+    assert profile.assets_added_90d == 1
+    assert profile.assets_revised == 1
+    # TVL is unresolved without a DefiLlama match, so the payout ratio stays
+    # unknown rather than dividing by a 0.0 placeholder.
+    assert cand.tvl_resolved is False
+    assert profile.max_payout_vs_tvl_pct is None
+
+
+def test_payout_ratio_resolves_when_defillama_supplies_tvl() -> None:
+    cand = _build_candidate(
+        _program(max_bounty=250_000),
+        _catalog([{"name": "Royco", "slug": "royco", "tvl": 25_000_000, "category": "Yield"}]),
+        ALL,
+        date(2026, 4, 13),
+        kyc=None,
+        min_bounty=None,
+    )
+    assert cand is not None
+    assert cand.tvl_resolved is True
+    assert cand.bounty_profile is not None
+    assert cand.bounty_profile.max_payout_vs_tvl_pct == 1.0
+
+
+def test_profile_survives_a_program_with_no_optional_sections() -> None:
+    """The catalogue's thin records must still produce a usable profile."""
+    cand = _build_candidate(
+        _program(audits=[], github=None),
+        _catalog([]),
+        ALL,
+        date(2026, 4, 13),
+        kyc=None,
+        min_bounty=None,
+    )
+    assert cand is not None
+    assert cand.bounty_profile is not None
+    assert cand.bounty_profile.known_issue_count == 0
+    assert cand.bounty_profile.audit_count == 0

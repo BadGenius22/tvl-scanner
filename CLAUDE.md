@@ -31,6 +31,8 @@ python -m tvl_scanner delta-watch --targets omnipair,project-0
 # not just the TVL-pool intersection `run` covers). Best for target selection.
 python -m tvl_scanner immunefi-scan --no-kyc --min-bounty 500000
 python -m tvl_scanner immunefi-scan --chains ethereum,arbitrum,base --cap 60
+# Hide programs you cannot submit to without an invitation
+python -m tvl_scanner immunefi-scan --exclude-invite-only
 
 # Verify pass-backed secrets are reachable
 tvl-scanner check-secrets
@@ -70,7 +72,9 @@ Stage 4: Rank+Report → reports/YYYY-MM-DD-scan.md + candidates/*.md (Candidate
 
 ### Immunefi-scan mode (bounty-first discovery — alternate entry)
 
-`enrich/immunefi_catalog.py` (`tvl-scanner immunefi-scan`, orchestrated by `pipeline.run_immunefi_scan`) inverts the normal flow. The 4-stage `run` and the DefiLlama-catalog path discover protocols by TVL and then *tag* whichever ones happen to have a bounty (`enrich/immunefi.py`), so they are blind to any active bounty whose protocol the TVL/pool discovery never surfaces. Immunefi-scan instead seeds one `EnrichedCandidate` from EVERY active program in the live Immunefi catalogue (`immunefi.fetch_raw`), so the whole bounty universe gets ranked by the same priority formula — this is the target-selection tool. Immunefi's catalogue already carries the bounty (payout/KYC/url), the in-scope contract addresses (chain inferred from the explorer domain — etherscan/arbiscan/basescan/…), the github repo, the languages, and the prior-audit record; the builder resolves only TVL + category (DefiLlama name-match, reusing `DefiLlamaCatalog.lookup`) and the TRUE deploy date (`enrich/etherscan.py`, EVM only) itself. A program with no in-scope contract on a supported `Chain` is skipped and counted, never silently dropped. The folded audit count (max of DefiLlama's and Immunefi's own `audits` list) feeds `defillama_audit_count`, which also makes Stage 3 skip the rate-limited GitHub contest search for already-audited programs. Filters: `--no-kyc` (full-payout solo hunting), `--min-bounty`, `--chains`. Writes `reports/YYYY-MM-DD-immunefi-scan.md`. Default chain scope is ALL supported chains (not the `.env` subset) — the point is the full universe.
+`enrich/immunefi_catalog.py` (`tvl-scanner immunefi-scan`, orchestrated by `pipeline.run_immunefi_scan`) inverts the normal flow. The 4-stage `run` and the DefiLlama-catalog path discover protocols by TVL and then *tag* whichever ones happen to have a bounty (`enrich/immunefi.py`), so they are blind to any active bounty whose protocol the TVL/pool discovery never surfaces. Immunefi-scan instead seeds one `EnrichedCandidate` from EVERY active program in the live Immunefi catalogue (`immunefi.fetch_raw`), so the whole bounty universe gets ranked — this is the target-selection tool. It does NOT use the 6-factor discovery formula: every candidate here already has a bounty, so `bounty_score` is a constant and `activity_score` is always the neutral 5.0 (Immunefi publishes no user counts). It ranks on the 12-criteria bounty formula instead (`rank/bounty_priority.py`, below). Immunefi's catalogue already carries the bounty (payout/KYC/url), the in-scope contract addresses (chain inferred from the explorer domain — etherscan/arbiscan/basescan/…), the github repo, the languages, and the prior-audit record; the builder resolves only TVL + category (DefiLlama name-match, reusing `DefiLlamaCatalog.lookup`) and the TRUE deploy date (`enrich/etherscan.py`, EVM only) itself. A program with no in-scope contract on a supported `Chain` is skipped and counted, never silently dropped. The folded audit count (max of DefiLlama's and Immunefi's own `audits` list) feeds `defillama_audit_count`, which also makes Stage 3 skip the rate-limited GitHub contest search for already-audited programs. Filters: `--no-kyc` (full-payout solo hunting), `--min-bounty`, `--chains`, `--exclude-invite-only`. Writes `reports/YYYY-MM-DD-immunefi-scan.md`. Default chain scope is ALL supported chains (not the `.env` subset) — the point is the full universe.
+
+`enrich/immunefi_profile.py` extracts a `BountyProfile` from each raw program dict — pure, no extra network call, since the catalogue already carries everything. It covers the criteria that live on the *program* rather than the code: the reward table (max/min per severity, `rewardModel`, `rewardCalculationPercentage`, the Immunefi 10% economic rule), `updatedDate`/`launchDate`/`endDate`, `knownIssues`, audit *recency* from `audits[].date`, per-type asset counts + `impacts`, scope churn from `assets[].addedAt/revision`, and the competition/resolution flags (`kyc`, `inviteOnly`, `features`, `boostedLeaderboard`, `responsiblePublicationCategory`). Every extractor degrades to a neutral default independently — one malformed program must never abort a 247-program scan. `attach_payout_ratio` fills `max_payout_vs_tvl_pct` once TVL resolves (again after the on-chain fallback), because a $50K cap over $2B of funds at risk is 0.0025% and that, not the headline, is what a critical is worth.
 
 Top-level orchestration lives in `src/tvl_scanner/pipeline.py`. There are **two parallel discovery paths** that converge before Stage 2 enrichment, deduped by `defillama_slug`:
 
@@ -84,9 +88,9 @@ The dedup step (`pipeline._dedupe_enriched`) prefers the DefiLlama catalog recor
 | Stage | Module dir | Key files | Output model |
 |-------|-----------|-----------|--------------|
 | 1 | `discover/` | `merge.py` (orchestrator), `geckoterminal.py`, `birdeye.py`, `alchemy.py`, `rpc.py` | `DiscoveredContract` |
-| 2 | `enrich/` | `enricher.py` (orchestrator), `defillama.py`, `defillama_protocols.py` (catalog path), `etherscan.py`, `github.py`, `homepage_scrape.py`, `evm_factory_check.py`, `solana_wrapper_check.py`, `solana_rpc.py` (resolves a DefiLlama Solana catalog candidate to its real on-chain program + upgrade-authority type — Stage 1 has no Solana leg, so catalog Solana rows are otherwise DefiLlama-only with no code pointer), `ottersec.py`, `bounty.py` (curated bounty registry) + `immunefi.py` (live Immunefi catalogue — address/name match) + `bugbounty_directory.py` (broad fallback: the lissy93/bug-bounties directory of ~3k programs — catches HackerOne/Bugcrowd/Intigriti/self-hosted bounties the Immunefi-centric sources miss; conservative domain/distinctive-name match, paying programs only; consulted only after curated seeds + live Immunefi both miss) + `immunefi_catalog.py` (bounty-first discovery — seeds a candidate per active Immunefi program; see `immunefi-scan` mode) | `EnrichedCandidate` |
+| 2 | `enrich/` | `enricher.py` (orchestrator), `defillama.py`, `defillama_protocols.py` (catalog path), `etherscan.py`, `github.py`, `homepage_scrape.py`, `evm_factory_check.py`, `solana_wrapper_check.py`, `solana_rpc.py` (resolves a DefiLlama Solana catalog candidate to its real on-chain program + upgrade-authority type — Stage 1 has no Solana leg, so catalog Solana rows are otherwise DefiLlama-only with no code pointer), `ottersec.py`, `bounty.py` (curated bounty registry) + `immunefi.py` (live Immunefi catalogue — address/name match) + `bugbounty_directory.py` (broad fallback: the lissy93/bug-bounties directory of ~3k programs — catches HackerOne/Bugcrowd/Intigriti/self-hosted bounties the Immunefi-centric sources miss; conservative domain/distinctive-name match, paying programs only; consulted only after curated seeds + live Immunefi both miss) + `immunefi_catalog.py` (bounty-first discovery — seeds a candidate per active Immunefi program; see `immunefi-scan` mode) + `immunefi_profile.py` (pure extractor: raw program dict → `BountyProfile`, the 12-criteria target-selection record) | `EnrichedCandidate` |
 | 3 | `audit_check/` | `checker.py` (orchestrator), `contests.py` (Sherlock/Cantina via GitHub search), `score.py` | `AuditedCandidate` |
-| 4 | `rank/` | `priority.py` (formula), `report.py` (markdown + per-candidate YAML) | `CandidateRecord` |
+| 4 | `rank/` | `priority.py` (6-factor discovery formula), `bounty_priority.py` (12-criteria bounty formula — `immunefi-scan` only), `report.py` (markdown + per-candidate YAML; picks the summary layout from `priority_formula`) | `CandidateRecord` |
 
 ## Priority formula (rank/priority.py)
 
@@ -98,6 +102,33 @@ priority = 0.25·tvl_score    +  0.20·freshness_score  +  0.30·audit_gap_score
 ```
 
 Each sub-score is normalized to [0, 10]. `audit_gap_score` carries the most weight by design — under-audited is the whole point. `edge_match_score` boosts protocols whose name/slug/type contains an `EDGE_MATCH_KEYWORDS` token (`leverage`, `vault`, `pendle`, `aave`, `anchor`, `noir`, `zk`, etc. — see `config.Settings.EDGE_MATCH_KEYWORDS`).
+
+This formula ranks *discovery*: of all the protocols on chain, which are worth a look. `immunefi-scan` uses the formula below instead.
+
+## Bounty priority formula (rank/bounty_priority.py) — immunefi-scan only
+
+Weighted sum on a 0-10 scale, cutoff 5.0, over the 12 target-selection criteria. Every candidate already has a bounty here, so the question is not "is this worth a look" but "is this program worth a solo researcher's weeks":
+
+| # | Criterion | Weight | Field | Signal |
+|---|-----------|--------|-------|--------|
+| 1 | Current TVL / funds at risk | 0.12 | `tvl_score` | reused from `priority.py` |
+| 2 | Maximum + minimum bounty | 0.12 | `bounty_size_score` | log-scaled ceiling (60%) blended with the critical *floor* (40%) — EV tracks the floor, not the headline |
+| 3 | Bounty calculation | 0.08 | `bounty_calc_score` | reward model (`range`/`fixed`/`up_to`, % of funds at risk, 10% economic rule) blended 50/50 with `max_payout_vs_tvl_pct` |
+| 4 | Last update | 0.05 | `program_update_score` | `updatedDate` decay over 730d — a dormant program's triage queue is unread |
+| 5 | Program age | 0.06 | `program_age_score` | flat 10 for 90d, decaying to 0 at 3y — every live month is another sweep of the same surface |
+| 6 | Known issues | 0.07 | `known_issues_score` | `10 − 1.5·count`; each published issue is a pre-closed submission area |
+| 7 | Audit history | 0.15 | `audit_gap_score` | `priority.audit_gap_score` plus up to +3 when the newest audit is >540d old |
+| 8 | Protocol architecture | 0.07 | `architecture_score` | scope size (3-25 contracts is the solo-readable band) × smart-contract share of assets |
+| 9 | Recent upgrades / features | 0.10 | `upgrade_activity_score` | `assets[].addedAt` churn — delta-watch's thesis on the bounty side: scope added after the last audit is unreviewed code on a live fund path |
+| 10 | Your technical edge | 0.08 | `edge_match_score` | reused from `priority.py` |
+| 11 | Likely researcher competition | 0.06 | `competition_score` | inverse crowding: invite-only floors it; Boosts, leaderboards and $1M+ headlines pull down; KYC and small programs push up |
+| 12 | Historical payout / resolution | 0.04 | `resolution_quality_score` | leaderboard payouts (hard evidence), Vault escrow, Safe Harbor, arbitration, publication category; paid mediation subtracts |
+
+Audit history keeps the largest single weight, as in the discovery formula. Funds at risk + bounty size together (0.24) set what a finding is worth; scope churn (0.10) locates where to look.
+
+**Unknown is neutral, not zero.** Every sub-score returns 5.0 when its input is missing, so a thin catalogue record is neither rewarded nor punished — the same convention `priority.py` uses for unresolved TVL and audit records. A 5.0 in a report row means *unknown*, not *average*.
+
+Scores from the two formulas are **not comparable**; `CandidateRecord.priority_formula` (`"tvl"` / `"bounty"`) records which produced a given row, and `report.py` selects the summary table layout from it.
 
 ## Audit-density scoring (audit_check/score.py)
 

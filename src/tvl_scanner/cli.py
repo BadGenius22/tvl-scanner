@@ -175,6 +175,12 @@ def immunefi_scan(
     min_bounty: int | None = typer.Option(
         None, "--min-bounty", help="Drop programs whose max payout is below this floor (USD)."
     ),
+    exclude_invite_only: bool = typer.Option(
+        False,
+        "--exclude-invite-only",
+        help="Drop invite-only programs (IOP). You cannot submit to those without an "
+        "invitation; they are kept by default and flagged in the record.",
+    ),
     cutoff: float = typer.Option(5.0, "--cutoff", help="Priority cutoff for inclusion in report."),
     cap: int = typer.Option(60, "--cap", help="Maximum candidates in report."),
     exclude: str | None = typer.Option(
@@ -192,12 +198,15 @@ def immunefi_scan(
     ),
     log_level: str = typer.Option("INFO", "--log-level", help="Python logging level."),
 ) -> None:
-    """Rank the FULL live Immunefi bounty catalogue by the priority formula.
+    """Rank the FULL live Immunefi bounty catalogue on the 12 target-selection criteria.
 
     Seeds a candidate from every active Immunefi program (not just the TVL-pool
     intersection that `run` covers), resolves TVL + deploy-age best-effort, folds
-    in each program's prior-audit record, and ranks them so the under-audited,
-    fresh, high-payout bounties surface first. Writes reports/YYYY-MM-DD-immunefi-scan.md.
+    in each program's prior-audit record, and ranks on: funds at risk, max/min
+    bounty, how the payout is calculated, last program update, program age, known
+    issues, audit history, scope architecture, recent scope additions, your
+    technical edge, likely researcher competition, and payout/resolution quality.
+    Writes reports/YYYY-MM-DD-immunefi-scan.md.
 
     Note: audit-checking the 0-audit candidates does a rate-limited GitHub contest
     search, so a full pass can take a few minutes.
@@ -218,6 +227,7 @@ def immunefi_scan(
         f"[bold cyan]tvl-scanner {__version__}[/]  immunefi-scan  "
         f"chains={'all' if chain_list is None else ', '.join(c.value for c in chain_list)}  "
         f"{'no-kyc  ' if no_kyc else ''}"
+        f"{'no-iop  ' if exclude_invite_only else ''}"
         f"{f'min_bounty=${min_bounty:,}  ' if min_bounty else ''}"
         f"cutoff={cutoff}  cap={cap}"
         f"{f'  exclude={len(exclude_slugs)}' if exclude_slugs else ''}"
@@ -230,6 +240,7 @@ def immunefi_scan(
             kyc=False if no_kyc else None,
             min_bounty=min_bounty,
             exclude_slugs=exclude_slugs or None,
+            exclude_invite_only=exclude_invite_only,
         )
     )
     console.print(f"\n[bold green]✓ Immunefi-scan report written:[/] {summary}")

@@ -84,6 +84,154 @@ class AuditSource(BaseModel):
     weight: int = Field(default=1, ge=0, description="Points contributed to audit_density_score")
 
 
+class RewardTier(BaseModel):
+    """One severity row of a bounty program's reward table.
+
+    Immunefi publishes rewards per (assetType, severity). `reward_model` is
+    Immunefi's own vocabulary: "range" (min..max, triager picks), "fixed" (flat
+    payout) or "up_to" (max only, fully discretionary).
+    """
+
+    severity: str
+    asset_type: str
+    reward_model: str | None = None
+    min_usd: int | None = None
+    max_usd: int | None = None
+    calculation_percentage: float | None = Field(
+        default=None,
+        description="Percent of funds-at-risk this tier pays (Immunefi's rewardCalculationPercentage)",
+    )
+    poc_required: bool | None = None
+
+
+class KnownIssue(BaseModel):
+    """A publicly declared known issue — a documented dead zone for submissions.
+
+    Anything a program lists here is pre-emptively out of scope: a finding in
+    that area is closed as a known issue / duplicate no matter how good the
+    write-up. A long list is a minefield AND evidence the program has already
+    been mined hard by other researchers.
+    """
+
+    description: str
+    link: str | None = None
+    last_updated: date | None = None
+    related_impact: str | None = None
+
+
+class BountyProfile(BaseModel):
+    """Bounty-program target-selection profile, extracted from the Immunefi catalogue.
+
+    Carries the rubric criteria that live on the *program* rather than on the
+    protocol's code — criteria 2-6 and 8-12 of the immunefi-scan ranking (see
+    `rank/bounty_priority.py`). Criterion 1 (funds at risk) is the candidate's
+    `tvl_usd`, criterion 7's count is `defillama_audit_count`, and criterion 10
+    is the edge-match keyword set; only the audit *recency* half of criterion 7
+    is stored here, because DefiLlama's integer says nothing about when.
+
+    Every field is best-effort: a program that omits a section leaves the
+    corresponding fields at their neutral default, and the scorer treats a
+    missing signal as unknown rather than as a zero.
+    """
+
+    # --- 2. Maximum + minimum bounty ---
+    max_bounty_usd: int | None = None
+    min_bounty_usd: int | None = Field(
+        default=None, description="Smallest floor across the smart-contract tiers"
+    )
+    critical_min_usd: int | None = None
+    critical_max_usd: int | None = None
+    reward_tiers: list[RewardTier] = Field(default_factory=list)
+
+    # --- 3. Bounty calculation ---
+    reward_model: str | None = Field(
+        default=None, description="Model of the critical smart-contract tier"
+    )
+    reward_calculation_percentage: float | None = None
+    ten_percent_economic_rule: bool = False
+    poc_required_for_critical: bool | None = None
+    payout_basis: str = Field(
+        default="unspecified",
+        description="One-line human summary of how a critical payout is actually computed",
+    )
+    max_payout_vs_tvl_pct: float | None = Field(
+        default=None,
+        description=(
+            "max_bounty_usd as a percent of the protocol's TVL. The headline max "
+            "is meaningless without it: a $50K cap over $2B of funds at risk is "
+            "0.0025%, which is what the payout actually is regardless of the "
+            "advertised 10% rule. None when TVL is unresolved."
+        ),
+    )
+
+    # --- 4. Last update ---
+    program_updated_at: date | None = None
+    days_since_program_update: int | None = None
+
+    # --- 5. Program age ---
+    program_launched_at: date | None = None
+    program_age_days: int | None = None
+    program_ends_at: date | None = None
+    is_time_boxed: bool = Field(
+        default=False, description="Has an endDate — audit comp / attackathon, not an open bounty"
+    )
+
+    # --- 6. Known issues ---
+    known_issue_count: int = 0
+    known_issues: list[KnownIssue] = Field(default_factory=list)
+    known_issues_last_updated: date | None = None
+
+    # --- 7. Audit history (recency half; the count lives on defillama_audit_count) ---
+    audit_count: int = 0
+    latest_audit_at: date | None = None
+    days_since_latest_audit: int | None = None
+    auditors: list[str] = Field(default_factory=list)
+
+    # --- 8. Protocol architecture ---
+    smart_contract_assets: int = 0
+    web_app_assets: int = 0
+    blockchain_dlt_assets: int = 0
+    primacy_of_impact: bool = False
+    ecosystems: list[str] = Field(default_factory=list)
+    program_types: list[str] = Field(default_factory=list)
+    project_types: list[str] = Field(default_factory=list)
+    critical_impacts: list[str] = Field(
+        default_factory=list, description="Titles of the in-scope critical-severity impacts"
+    )
+
+    # --- 9. Recent upgrades / features ---
+    newest_asset_added_at: date | None = None
+    days_since_newest_asset: int | None = None
+    assets_added_90d: int = 0
+    assets_revised: int = Field(
+        default=0, description="In-scope assets whose Immunefi revision counter is above zero"
+    )
+
+    # --- 11. Likely researcher competition ---
+    kyc_required: bool = False
+    invite_only: bool = False
+    immunefi_standard: bool = False
+    is_boosted: bool = Field(
+        default=False, description="Boost / Attackathon / audit competition — many eyes, at once"
+    )
+    boosted_researcher_count: int = 0
+    boosted_total_paid_usd: int = 0
+    program_features: list[str] = Field(default_factory=list)
+
+    # --- 12. Historical payout / resolution quality ---
+    responsible_publication_category: str | None = None
+    safe_harbor: bool = False
+    arbitration_available: bool = False
+    pay_to_mediate: bool = False
+    no_free_mediation: bool = Field(
+        default=False, description="Researcher must pay to open a mediation — a dispute-cost red flag"
+    )
+    vault_escrow: bool = Field(
+        default=False, description="Immunefi Vault — payout funds are escrowed on-chain and provable"
+    )
+    managed_triage: bool = False
+
+
 class DiscoveredContract(BaseModel):
     """Stage 1 output: a contract above the TVL threshold, not yet enriched."""
 
@@ -186,6 +334,14 @@ class EnrichedCandidate(BaseModel):
     # appends these to its all_sources list. Default empty.
     precomputed_audit_sources: list[AuditSource] = Field(default_factory=list)
 
+    # Bounty-program target-selection profile. Populated only by the
+    # immunefi-scan path (enrich/immunefi_profile.py), where the whole program
+    # record is available; None for every candidate discovered by TVL, whose
+    # bounty is at best a name-match with no program detail behind it. The
+    # 12-criteria ranking in rank/bounty_priority.py reads it and falls back to
+    # neutral sub-scores when it is None.
+    bounty_profile: BountyProfile | None = None
+
 
 class AuditedCandidate(EnrichedCandidate):
     """Stage 3 output: enriched candidate with audit density computed."""
@@ -221,6 +377,27 @@ class CandidateRecord(AuditedCandidate):
     activity_score: float
     edge_match_score: float
     bounty_score: float
+
+    # Which formula produced `priority_score`. "tvl" is the 6-factor discovery
+    # formula (rank/priority.py); "bounty" is the 12-criteria target-selection
+    # formula used by immunefi-scan (rank/bounty_priority.py). The two are NOT
+    # comparable across reports — the sub-scores below are only populated by
+    # the bounty formula.
+    priority_formula: Literal["tvl", "bounty"] = "tvl"
+
+    # --- 12-criteria bounty sub-scores (immunefi-scan only; None otherwise) ---
+    # Named for the rubric criterion each one answers. tvl_score (1),
+    # audit_gap_score (7) and edge_match_score (10) are reused from above
+    # rather than duplicated.
+    bounty_size_score: float | None = None  # 2. max + min bounty
+    bounty_calc_score: float | None = None  # 3. how the payout is computed
+    program_update_score: float | None = None  # 4. last update
+    program_age_score: float | None = None  # 5. program age
+    known_issues_score: float | None = None  # 6. known issues
+    architecture_score: float | None = None  # 8. protocol architecture
+    upgrade_activity_score: float | None = None  # 9. recent upgrades / features
+    competition_score: float | None = None  # 11. likely researcher competition
+    resolution_quality_score: float | None = None  # 12. historical payout / resolution
 
     # Stage A lift targets (derived fields)
     edge_match_keywords: list[str] = Field(default_factory=list)

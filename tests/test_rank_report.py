@@ -10,10 +10,13 @@ import yaml
 from tvl_scanner.models import (
     AuditSource,
     AuditSourceKind,
+    BountyProfile,
     CandidateRecord,
     Chain,
     DiscoverySource,
+    KnownIssue,
     Language,
+    RewardTier,
 )
 from tvl_scanner.rank.report import (
     _fmt_age,
@@ -206,3 +209,192 @@ def test_write_report_produces_summary_and_candidates(tmp_path: Path) -> None:
     assert candidate_paths[0].name == "01-leverage-vault.md"
     assert candidate_paths[1].name == "02-yield-opt.md"
     assert (tmp_path / "2026-04-13-scan" / "candidates").is_dir()
+
+
+# ---- immunefi-scan layout (12-criteria bounty records) ----
+
+
+def _bounty_record(
+    *,
+    target_name: str = "acme",
+    display_name: str = "Acme Protocol",
+    priority: float = 7.4,
+    invite_only: bool = False,
+    known_issue_count: int = 0,
+    tvl_resolved: bool = True,
+) -> CandidateRecord:
+    """A record as produced by `rank/bounty_priority.rank_candidate_bounty`."""
+    profile = BountyProfile(
+        max_bounty_usd=250_000,
+        min_bounty_usd=2_000,
+        critical_min_usd=50_000,
+        critical_max_usd=250_000,
+        reward_tiers=[
+            RewardTier(
+                severity="critical",
+                asset_type="smart_contract",
+                reward_model="range",
+                min_usd=50_000,
+                max_usd=250_000,
+                calculation_percentage=10,
+            )
+        ],
+        reward_model="range",
+        reward_calculation_percentage=10,
+        ten_percent_economic_rule=True,
+        poc_required_for_critical=True,
+        payout_basis="10% of funds at risk, capped at $250,000; Immunefi 10% economic rule applies",
+        max_payout_vs_tvl_pct=5.0 if tvl_resolved else None,
+        program_updated_at=date(2026, 4, 1),
+        days_since_program_update=12,
+        program_launched_at=date(2025, 10, 13),
+        program_age_days=182,
+        known_issue_count=known_issue_count,
+        known_issues=[
+            KnownIssue(description="Governor quorum drift.", link="https://example.test/1")
+        ]
+        * known_issue_count,
+        audit_count=1,
+        latest_audit_at=date(2024, 1, 1),
+        days_since_latest_audit=833,
+        auditors=["Zenith"],
+        smart_contract_assets=8,
+        web_app_assets=1,
+        ecosystems=["ETH"],
+        project_types=["Defi"],
+        critical_impacts=["Direct theft of any user funds"],
+        newest_asset_added_at=date(2026, 3, 20),
+        days_since_newest_asset=24,
+        assets_added_90d=3,
+        assets_revised=2,
+        kyc_required=True,
+        invite_only=invite_only,
+        immunefi_standard=True,
+        vault_escrow=True,
+        responsible_publication_category="category_2",
+    )
+    base = _record(target_name=target_name, display_name=display_name, priority=priority)
+    return base.model_copy(
+        update={
+            "bounty_program": "immunefi",
+            "bounty_url": "https://immunefi.com/bug-bounty/acme",
+            "bounty_max_payout_usd": 250_000,
+            "bounty_profile": profile,
+            "tvl_resolved": tvl_resolved,
+            "priority_formula": "bounty",
+            "bounty_size_score": 8.4,
+            "bounty_calc_score": 9.1,
+            "program_update_score": 10.0,
+            "program_age_score": 8.7,
+            "known_issues_score": 10.0 - 1.5 * known_issue_count,
+            "architecture_score": 9.5,
+            "upgrade_activity_score": 9.0,
+            "competition_score": 6.0,
+            "resolution_quality_score": 7.5,
+        }
+    )
+
+
+def test_bounty_summary_uses_the_target_selection_columns(tmp_path: Path) -> None:
+    summary, _ = write_report(
+        [_bounty_record()], scan_date=date(2026, 4, 13), reports_dir=tmp_path, label="immunefi-scan"
+    )
+    text = summary.read_text()
+
+    assert summary.name == "2026-04-13-immunefi-scan.md"
+    assert "# Immunefi Bounty Scan" in text
+    # Columns the discovery table has no place for.
+    for header in ("Crit floor", "%TVL", "Prog age", "New 90d", "Known", "Comp"):
+        assert header in text
+    assert "$250K" in text  # max payout
+    assert "$50K" in text  # critical floor
+    assert "5%" in text  # payout vs funds at risk
+    # The 12-criteria legend replaces the 6-factor one.
+    assert "Recent upgrades / features" in text
+    assert "not comparable" in text
+
+
+def test_bounty_summary_flags_invite_only_programs(tmp_path: Path) -> None:
+    summary, _ = write_report(
+        [_bounty_record(invite_only=True)],
+        scan_date=date(2026, 4, 13),
+        reports_dir=tmp_path,
+        label="immunefi-scan",
+    )
+    text = summary.read_text()
+    assert "⚠IOP" in text
+    assert "Invite-only (cannot submit without an invitation)**: 1" in text
+
+
+def test_tvl_records_keep_the_discovery_layout(tmp_path: Path) -> None:
+    """A `run` report must not gain bounty columns just because the code exists."""
+    summary, _ = write_report([_record()], scan_date=date(2026, 4, 13), reports_dir=tmp_path)
+    text = summary.read_text()
+    assert "# TVL Scanner Report" in text
+    assert "Crit floor" not in text
+    assert "Under-audited |" in text  # the discovery table's own column
+
+
+def test_bounty_candidate_record_covers_all_twelve_criteria(tmp_path: Path) -> None:
+    path = write_candidate_file(_bounty_record(known_issue_count=2), 1, tmp_path)
+    content = path.read_text()
+
+    assert "## Bounty program profile (12-criteria rubric)" in content
+    for heading in (
+        "### 1. Funds at risk",
+        "### 2. Maximum + minimum bounty",
+        "### 3. Bounty calculation",
+        "### 4-5. Program update & age",
+        "### 6. Known issues",
+        "### 7. Audit history (per Immunefi)",
+        "### 8. Protocol architecture",
+        "### 9. Recent upgrades / scope changes",
+        "### 11. Likely researcher competition",
+        "### 12. Payout & resolution quality",
+    ):
+        assert heading in content, heading
+
+    # The 12-term breakdown replaces the 6-factor one.
+    assert "## Priority breakdown (12-criteria bounty formula)" in content
+    assert "9. recent upgrades / scope churn: 9.0 × 0.10" in content
+    assert "7. audit history (gap + staleness)" in content
+
+    # Decision-critical prose, not just numbers.
+    assert "10% of funds at risk" in content
+    assert "entered scope in the last 90 days" in content
+    assert "published known issue(s)" in content
+    assert "Over 18 months old" in content  # stale-audit warning
+    assert "PoC is REQUIRED" in content or "PoC required for critical" in content
+
+
+def test_bounty_record_warns_when_the_cap_binds(tmp_path: Path) -> None:
+    record = _bounty_record()
+    assert record.bounty_profile is not None
+    record.bounty_profile.max_payout_vs_tvl_pct = 0.0025
+    content = write_candidate_file(record, 1, tmp_path).read_text()
+    assert "The cap binds hard" in content
+
+
+def test_bounty_frontmatter_extends_without_breaking_the_vault_contract() -> None:
+    fm = _frontmatter_dict(_bounty_record())
+
+    # Stage 3.5 fields the vault template reads are untouched.
+    for key in ("target_name", "bounty_program", "bounty_url", "bounty_max_payout_usd"):
+        assert key in fm
+
+    # Additive bounty keys.
+    assert fm["bounty_critical_min_usd"] == 50_000
+    assert fm["bounty_payout_basis"].startswith("10% of funds at risk")
+    assert fm["bounty_assets_added_90d"] == 3
+    assert fm["priority_formula"] == "bounty"
+    assert fm["priority_subscores"]["upgrade_activity"] == 9.0
+    assert fm["bounty_program_profile"]["smart_contract_assets"] == 8
+
+    # Serializable as YAML (dates rendered as strings by model_dump(mode="json")).
+    assert yaml.safe_load(yaml.safe_dump(fm))["bounty_invite_only"] is False
+
+
+def test_run_records_carry_no_bounty_frontmatter_keys() -> None:
+    fm = _frontmatter_dict(_record())
+    assert "bounty_program_profile" not in fm
+    assert "priority_subscores" not in fm

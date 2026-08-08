@@ -41,6 +41,7 @@ from tvl_scanner.enrich.homepage_scrape import (
     github_url_matches_protocol,
     scrape_homepage_with_fallback,
 )
+from tvl_scanner.enrich.immunefi_profile import attach_payout_ratio, build_profile
 from tvl_scanner.enrich.onchain_tvl import measure_onchain_tvl
 from tvl_scanner.enrich.scope_audits import extract_scope_audit_sources
 from tvl_scanner.models import (
@@ -329,6 +330,12 @@ def _build_candidate(
 
     ptype = category or _project_type(program) or "Bug bounty"
 
+    # Criteria 2-6 and 8-12 of the target-selection rubric, straight out of the
+    # program record. The payout-vs-TVL ratio needs the TVL we just resolved,
+    # and is recomputed after the on-chain TVL fallback runs.
+    profile = build_profile(program, scan_date=scan_date)
+    attach_payout_ratio(profile, tvl, tvl_resolved)
+
     return EnrichedCandidate(
         chain=chain,
         address=address,
@@ -361,6 +368,7 @@ def _build_candidate(
         # firms (Sigma Prime, ChainSecurity, PeckShield) which no contest
         # search can reach.
         precomputed_audit_sources=extract_scope_audit_sources(program),
+        bounty_profile=profile,
     )
 
 
@@ -572,6 +580,10 @@ async def _resolve_onchain_tvl(
         if measured is None:
             return False
         cand.tvl_usd, cand.tvl_resolved = measured[0], True
+        # The payout-vs-funds-at-risk ratio was left None when DefiLlama had no
+        # figure; now that TVL is measured, criterion 3 can be scored properly.
+        if cand.bounty_profile is not None:
+            attach_payout_ratio(cand.bounty_profile, cand.tvl_usd, True)
         note = f"TVL measured {measured[1]}"
         cand.defillama_audit_note = (
             f"{cand.defillama_audit_note} | {note}" if cand.defillama_audit_note else note

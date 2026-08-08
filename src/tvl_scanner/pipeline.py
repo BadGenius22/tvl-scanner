@@ -136,17 +136,27 @@ async def run_immunefi_scan(
     kyc: bool | None = None,
     min_bounty: int | None = None,
     exclude_slugs: set[str] | None = None,
+    exclude_invite_only: bool = False,
 ) -> Path:
-    """Rank the FULL live Immunefi bounty universe by the priority formula.
+    """Rank the FULL live Immunefi bounty universe on the 12 target-selection criteria.
 
     Unlike `run_pipeline` (which discovers by TVL pool / DefiLlama catalog and then
     tags whichever protocols happen to have a bounty), this seeds a candidate from
     every active Immunefi program, so a live bounty is never missed just because
     the TVL-pool discovery didn't independently surface its protocol. TVL and
     deploy-age are resolved best-effort; the bounty, in-scope addresses, and prior-
-    audit record come straight from Immunefi. Writes reports/YYYY-MM-DD-immunefi-scan.md.
+    audit record come straight from Immunefi.
+
+    Ranking uses `rank/bounty_priority.py`, not the 6-factor discovery formula:
+    every candidate here already has a bounty, so that formula's `bounty_score`
+    term is a constant and its `activity_score` term is always neutral. The
+    12-criteria formula scores what actually separates bounty targets — payout
+    size and how it is computed, program age and staleness, known-issue density,
+    scope churn, competition and resolution quality. Writes
+    reports/YYYY-MM-DD-immunefi-scan.md.
     """
     from tvl_scanner.enrich.immunefi_catalog import discover_from_immunefi_catalog
+    from tvl_scanner.rank.bounty_priority import rank_all_bounty
 
     scan_date = scan_date or date.today()
 
@@ -171,13 +181,14 @@ async def run_immunefi_scan(
     n_under = sum(1 for a in audited if a.under_audited)
     log.info("audit-check: %d / %d are under-audited", n_under, len(audited))
 
-    log.info("=== Stage 4: Rank + Report ===")
-    ranked = rank_all(
+    log.info("=== Stage 4: Rank + Report (12-criteria bounty formula) ===")
+    ranked = rank_all_bounty(
         audited,
         scan_date=scan_date,
         cutoff=cutoff,
         cap=cap,
         exclude_slugs=exclude_slugs,
+        exclude_invite_only=exclude_invite_only,
     )
     summary_path, candidate_paths = write_report(ranked, scan_date, label="immunefi-scan")
     log.info(
