@@ -47,3 +47,28 @@
     DeFi Saver angle needs the DFS adapter itself to misuse it. Bigger prize: watch
     for Aave to add V4/position-managers to its own Immunefi scope (~$1M) — this PM
     upgrading (a code change here) is a proxy signal that V4 is evolving.
+
+- slug: olympus-price-v2
+  chain: evm
+  rpc: ethereum
+  address: "0x5c69f61D384e41b55699C3B10523Ed81c5ef9cbd"   # OlympusPriceConfigV2 (src/scripts/env.json current.mainnet.olympus.policies)
+  baseline_codehash: "sha256:79a698d9143d4679"   # observed live 2026-08-06, 20,965 bytes
+  enabled: true
+  note: >-
+    Immunefi $3.33M no-KYC, but PRIMACY OF RULES (all 72 assets isPrimacyOfImpact
+    false) and this address is NOT in the asset list — see the scope caveat below.
+    Gate-checked 2026-08-06: the PRICE v2 / oracle-factory rewrite carries a real
+    post-audit delta (32 files, +4,372/-1,096 landed on the price-feed-improvements
+    branch AFTER its 2026-03-18 audit scope froze, incl. PriceCache.sol +552 and
+    TimelockQueue.sol +270 which appear in NO audit scopefile). PriceConfig.v2
+    (+516/-45 post-audit) is live at this address; the three oracle factories are
+    still 0x0 in env.json and PriceCache/TimelockQueue have no entry at all, so the
+    bulk of the unaudited code is UNSHIPPED. A code change here signals the V2
+    price stack moving -> re-check whether the factories/PriceCache went live too.
+    SCOPE CAVEAT (the actual blocker, Livepeer pattern): Immunefi lists the OLD
+    pair — "Olympus Price" 0xd6C4D723 and "Olympus Price Config" 0xf6D5d06A —
+    while the repo's live modules are 0x465cCc69 (OlympusPriceV1) and this
+    0x5c69f61D, both UNLISTED. Under Primacy of Rules the fresh deployed code is
+    unpayable until Olympus adds these addresses. The real trigger is therefore a
+    SCOPE LISTING, which neither delta-watch nor deploy-watch can observe; this
+    entry is the closest available proxy.

@@ -93,9 +93,15 @@
   # true last-audit commit once identified (Veda publishes Spearbit/Cantina
   # reports off-repo). HEAD was 480c683d (2026-06-26) when added; main is
   # actively developed (~116 PRs in the window) so expect a large delta.
+  #
+  # RE-PINNED 2026-08-06 to OUR last-reviewed HEAD: 480c683d, audited 2026-06-29
+  # (NOTHING_SUBMITTABLE — the 44e17b06..480c683d delta resolved to comment-only
+  # churn plus one empty decoder composition). Leaving the baseline at the
+  # provisional 44e17b06 made every run re-surface that already-cleared surface
+  # as 530 commits of "new" delta. Future runs now show only post-480c683d code.
   branch: main
-  audited_at_commit: 44e17b06
-  audited_at_date: 2026-03-28
+  audited_at_commit: 480c683d
+  audited_at_date: 2026-06-29
   bounty_program: immunefi
   bounty_max_payout_usd: 1000000
   # Veda's fund-path components are named with domain terms the generic list
