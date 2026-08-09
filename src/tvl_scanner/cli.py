@@ -44,8 +44,12 @@ def _parse_exclude_slugs(text: str) -> set[str]:
 
     slugs: set[str] = set()
     for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        # Strip trailing comments, not just whole-line ones: a kill list is far
+        # more useful when each slug carries the reason it was killed, and
+        # without this the reason slugifies into the token itself
+        # ("kast-already-audited-by-us") and silently matches nothing.
+        stripped = line.split("#", 1)[0].strip()
+        if not stripped:
             continue
         tokens = [t.strip() for t in stripped.split("|")]
         for token in tokens or [stripped]:

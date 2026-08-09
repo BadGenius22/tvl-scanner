@@ -15,6 +15,9 @@ reports/*
 # so re-including the per-candidate records needs the parent un-ignored first.
 !reports/*-triage.md
 !reports/*-triage/
+# Hand-maintained kill list consumed by --exclude-slugs-file. Tracked so the
+# triage decisions behind it survive a fresh clone.
+!reports/excluded-slugs.txt
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

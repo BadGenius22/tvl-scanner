@@ -163,3 +163,19 @@ def test_submission_barrier_flags_reach_the_filter() -> None:
     assert captured.exclude_level_gated is True
     assert "no-pay-to-submit" in _describe_filters(captured)
     assert "no-level-gated" in _describe_filters(captured)
+
+
+def test_parse_exclude_slugs_strips_trailing_comments() -> None:
+    """A kill list carries the reason per slug; the reason must not become the slug."""
+    text = (
+        "# permanently excluded\n"
+        "KAST          # already audited by us (2026-07-30)\n"
+        "sparklend     # deployed == audited; third rejection\n"
+        "\n"
+        "pareto\n"
+    )
+    assert _parse_exclude_slugs(text) == {"kast", "sparklend", "pareto"}
+
+
+def test_parse_exclude_slugs_ignores_a_comment_only_line() -> None:
+    assert _parse_exclude_slugs("# nothing here\n   # nor here\n") == set()

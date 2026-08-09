@@ -1,0 +1,19 @@
+# Permanently excluded Immunefi programs — pass with --exclude-slugs-file.
+#
+# These are decisions, not scanner output: each one was gate-checked to a dead
+# end by hand, and without this file the scanner re-surfaces them every run
+# (KAST came back at rank 1 on 2026-08-08, SparkLend at rank 20 for a fourth
+# time). Matching is case-insensitive against the Immunefi slug, the DefiLlama
+# slug and the display name.
+#
+# NOT listed here: programs blocked by a structural barrier rather than a
+# judgement call — Alchemix (Pay to Submit + researcher-level gate), Lombard,
+# Royco, Ostium and the rest of the fee-charging set. Those are handled by
+# --exclude-pay-to-submit / --exclude-level-gated, which stay correct as the
+# catalogue changes; hard-coding them here would hide a program that later
+# drops its fee.
+
+KAST          # already audited by us (2026-07-30)
+sparklend     # deployed == audited; third rejection on scope-recency (2026-07-30)
+pareto        # 14 audits, critical up_to $50k => 0.022% of TVL (2026-07-30)
+beanstalk     # no fresh delta since 2026-05-13 (2026-07-30)
