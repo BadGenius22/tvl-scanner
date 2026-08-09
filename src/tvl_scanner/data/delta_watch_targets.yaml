@@ -309,3 +309,58 @@
     0x3B68fbF8 (2026-06-22). No POI, so the live code is unsubmittable today.
     This entry watches for the NEXT ship. The listing trigger is manual —
     see the memory note; no watcher can express an Immunefi scope diff.
+
+# ---- Added 2026-08-09 from the sBTC / Strata / ether.fi comparison. ----
+#
+# First DLT-layer entry in this list: the in-scope code is a node client (Rust
+# signer, Emily API, WSTS threshold-sig lib), not smart contracts. Everything the
+# watcher does still applies — it classifies changed file PATHS, which is layer
+# agnostic — but the severity rows it feeds are the Blockchain/DLT scale, not a
+# contract impact table. See ~/.claude/audit-loop.md step 0.5.
+
+- slug: sbtc
+  display_name: sBTC (Stacks BTC peg)
+  github: https://github.com/stacks-sbtc/sbtc
+  # `chains` is omitted on purpose: the Chain enum has no stacks/bitcoin member
+  # and _coerce_enum_list drops unknown values silently, so naming them would
+  # look set in the YAML and be empty at runtime. Clarity is likewise absent from
+  # the Language enum — [rust] is accurate for where the delta actually is.
+  languages: [rust]
+  branch: main
+  #
+  # Immunefi $250k, KYC, and TWO reward tables. blockchain_dlt pays all four
+  # tiers (crit $25k–$250k under the 10% rule, high $5k–$25k, med $1k–$5k, low
+  # $1k fixed); smart_contract pays Critical + High only. In-scope assets are
+  # five directories of THIS one repo: contracts/contracts (Clarity), emily/,
+  # signer/, sbtc/, wsts/.
+  #
+  # Baseline 1b9e1f07 = the last commit before the Jan-2025 audit. sBTC's audits
+  # are Apr-2024 and Jan-2025 (Ottersec x2, CoinFabrik, Clarity Alliance); exact
+  # days are not published, so this pin is date-derived, not commit-exact.
+  # Unaudited surface when added, non-test source only:
+  #   signer/src           +28,129 / -11,231   (91 files)
+  #   wsts/src              +8,565 /       0   (16 files — VENDORED into the repo
+  #                                             2026-03-02 at f43fd2d, then
+  #                                             +1,112 / -4,686 since)
+  #   emily/handler/src     +4,583 /  -1,062   (46 files)
+  #   sbtc/src              +3,698 /    -252   (20 files)
+  #   contracts/contracts        0 /       0   (Clarity frozen since the audit)
+  #
+  # A harsher baseline exists and should be used by hand before writing anything
+  # up: 59541d7d (2025-03-28) is the end of Immunefi's Stacks II Attackathon,
+  # which swept this same code. The two attackathons published 48 findings
+  # between them, and the program excludes all of it. Anything in the 1b9e1f07
+  # diff but NOT in the 59541d7d diff was crowd-reviewed. The pin stays at the
+  # audit so the report always shows the full unaudited surface.
+  #
+  # Exclusion clause is unusually wide: anything referenced in any GitHub issue
+  # or in ANY open or closed PR is out of scope. Commit subjects carry their PR
+  # numbers, so read the introducing PR before escalating a finding.
+  audited_at_commit: 1b9e1f07f90d4f1f63cc6d91a6d45b33a6febb40
+  audited_at_date: 2025-01-30
+  bounty_program: immunefi
+  bounty_max_payout_usd: 250000
+  # Node-layer fund paths the generic list misses. Deliberately NOT `signer`,
+  # `emily` or `wsts`: matching is path-token based, so a directory name would
+  # flag 100% of that asset and flatten the fund-path score it feeds.
+  extra_keywords: [utxo, packaging, sweep, dkg, nonce, reclaim, coordinator, idpack]
