@@ -334,30 +334,47 @@
   # five directories of THIS one repo: contracts/contracts (Clarity), emily/,
   # signer/, sbtc/, wsts/.
   #
-  # Baseline 1b9e1f07 = the last commit before the Jan-2025 audit. sBTC's audits
-  # are Apr-2024 and Jan-2025 (Ottersec x2, CoinFabrik, Clarity Alliance); exact
-  # days are not published, so this pin is date-derived, not commit-exact.
-  # Unaudited surface when added, non-test source only:
-  #   signer/src           +28,129 / -11,231   (91 files)
-  #   wsts/src              +8,565 /       0   (16 files — VENDORED into the repo
-  #                                             2026-03-02 at f43fd2d, then
-  #                                             +1,112 / -4,686 since)
-  #   emily/handler/src     +4,583 /  -1,062   (46 files)
-  #   sbtc/src              +3,698 /    -252   (20 files)
-  #   contracts/contracts        0 /       0   (Clarity frozen since the audit)
+  # Baseline 59541d7d = the LATEST review of any kind, whichever came last.
+  # Established from the audit PDFs themselves (docs.stacks.co), not from dates:
+  #   CoinFabrik  Apr-2024    Trust-Machines/wsts @ e98c6dd9 (v8.0.0)  WSTS only
+  #   ClarityAll. 2025-01-05  sBTC                                     Clarity + Emily
+  #   OtterSec    2025-02-04  Trust-Machines/wsts @ 612c023            WSTS
+  #   OtterSec    2025-04-10  stacks-network/sbtc @ 475f845 (03-25)    WITHDRAWALS ONLY
+  #   Attackathon II ended 2025-03-28 @ 59541d7d                       broad crowd sweep
+  # 59541d7d (2025-03-28) post-dates all of them, so it is the honest pin: code
+  # after it has been reviewed by nobody. An earlier draft of this entry pinned
+  # 1b9e1f07 (2025-01-30) on the assumption that Jan-2025 was the newest audit;
+  # the OtterSec withdrawal report is two months later and that pin was wrong.
   #
-  # A harsher baseline exists and should be used by hand before writing anything
-  # up: 59541d7d (2025-03-28) is the end of Immunefi's Stacks II Attackathon,
-  # which swept this same code. The two attackathons published 48 findings
-  # between them, and the program excludes all of it. Anything in the 1b9e1f07
-  # diff but NOT in the 59541d7d diff was crowd-reviewed. The pin stays at the
-  # audit so the report always shows the full unaudited surface.
+  # Unaudited AND LIVE surface (59541d7d..v1.3.3, non-test source):
+  #   signer/src           +15,510 /  -7,447   (83 files)
+  #   wsts/src              +8,565 /       0   (16 files — VENDORED 2026-03-02 at
+  #                                             f43fd2d; both WSTS audits were of
+  #                                             UPSTREAM, never this copy. vs the
+  #                                             newest audited upstream 612c023 the
+  #                                             state machines differ by ~5,900
+  #                                             lines: fire.rs 1690, coordinator/
+  #                                             mod.rs 880, signer/mod.rs 687,
+  #                                             net.rs 704, frost.rs 613, v2.rs 414)
+  #   emily/handler/src     +2,717 /    -920   (43 files)
+  #   sbtc/src              +1,088 /    -186   (16 files)
+  #   contracts/contracts        0 /       0   (Clarity frozen; deployed == repo,
+  #                                             all 5 mainnet contracts diffed)
+  #
+  # NOTE the OtterSec sBTC audit was scoped to "the withdrawals functionality"
+  # only, so deposit, sweep construction, packaging, coordinator, DKG and Emily
+  # deposit handling were never covered by ANY audit at any commit. The
+  # attackathons are the only broad review those paths have had.
+  #
+  # AUDIT v1.3.3, NOT HEAD. docker/mainnet/docker-compose.yml:46 pins
+  # ghcr.io/stacks-sbtc/sbtc:signer-v1.3.3@sha256:955a9ee0..., and v1.3.3 is the
+  # newest release. HEAD is 13 unreleased commits past it.
   #
   # Exclusion clause is unusually wide: anything referenced in any GitHub issue
   # or in ANY open or closed PR is out of scope. Commit subjects carry their PR
   # numbers, so read the introducing PR before escalating a finding.
-  audited_at_commit: 1b9e1f07f90d4f1f63cc6d91a6d45b33a6febb40
-  audited_at_date: 2025-01-30
+  audited_at_commit: 59541d7d44913c42e76b8f84ab1d967f31129eca
+  audited_at_date: 2025-03-28
   bounty_program: immunefi
   bounty_max_payout_usd: 250000
   # Node-layer fund paths the generic list misses. Deliberately NOT `signer`,
