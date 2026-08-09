@@ -8,6 +8,7 @@ from pathlib import Path
 import yaml
 
 from tvl_scanner.models import (
+    AuditRecord,
     AuditSource,
     AuditSourceKind,
     BountyProfile,
@@ -16,7 +17,11 @@ from tvl_scanner.models import (
     DiscoverySource,
     KnownIssue,
     Language,
+    ProgramExclusions,
+    ProgramImpact,
+    ProgramResource,
     RewardTier,
+    ScopeAsset,
 )
 from tvl_scanner.rank.report import (
     _fmt_age,
@@ -434,3 +439,132 @@ def test_empty_bounty_scan_still_shows_its_funnel(tmp_path: Path) -> None:
 def test_run_reports_never_carry_a_funnel(tmp_path: Path) -> None:
     summary, _ = write_report([_record()], scan_date=date(2026, 4, 13), reports_dir=tmp_path)
     assert "Filter funnel" not in summary.read_text()
+
+
+# ---- Scope, exclusions and resources ----
+
+
+def _documented_record() -> CandidateRecord:
+    """A bounty record carrying the program-document fields, as a live scan does."""
+    record = _bounty_record()
+    assert record.bounty_profile is not None
+    p = record.bounty_profile
+    p.scope_assets = [
+        ScopeAsset(
+            asset_type="smart_contract",
+            url="https://arbiscan.io/address/0x" + "ab" * 20,
+            description="Vault Manager",
+            address="0x" + "ab" * 20,
+            explorer="arbiscan.io",
+            added_at=date(2026, 3, 20),
+        ),
+        ScopeAsset(
+            asset_type="smart_contract",
+            url="https://github.com/acme/core/tree/main/src",
+            description="Core contracts",
+            repo="acme/core/tree/main/src",
+        ),
+        ScopeAsset(
+            asset_type="smart_contract",
+            url="https://immunefi.com/",
+            description="Primacy of Impact",
+            primacy_of_impact=True,
+            is_placeholder=True,
+        ),
+    ]
+    p.repo_scoped_assets = 1
+    p.primacy_of_impact = True
+    p.impacts = [
+        ProgramImpact(severity="critical", asset_type="smart_contract", title="Direct theft of any user funds"),
+        ProgramImpact(severity="high", asset_type="smart_contract", title="Temporary freezing of funds"),
+        ProgramImpact(severity="medium", asset_type="smart_contract", title="Block stuffing"),
+    ]
+    p.poc_required_tiers = ["smart_contract - critical"]
+    p.exclusions = ProgramExclusions(
+        feasibility_limitations="Attacks requiring a compromised private key are out of scope.",
+        custom_out_of_scope="The legacy v1 vaults are excluded.",
+        prioritized_vulnerabilities="Accounting drift in the credit vaults.",
+    )
+    p.resources = [
+        ProgramResource(kind="website", url="https://acme.xyz"),
+        ProgramResource(kind="audit", url="https://acme.xyz/audit.pdf", label="Zenith"),
+    ]
+    return record
+
+
+def test_scope_table_lists_every_asset_and_hides_the_placeholder(tmp_path: Path) -> None:
+    content = write_candidate_file(_documented_record(), 1, tmp_path).read_text()
+
+    assert "## Assets in scope" in content
+    assert "2 listed asset(s)" in content
+    assert "0x" + "ab" * 20 in content
+    assert "acme/core/tree/main/src" in content
+    # The sentinel row is disclosed as excluded rather than silently dropped.
+    assert "Primacy-of-Impact placeholder row(s) are excluded" in content
+    assert "point at a repo or a path inside one" in content
+
+
+def test_impact_table_renders_every_severity(tmp_path: Path) -> None:
+    content = write_candidate_file(_documented_record(), 1, tmp_path).read_text()
+    assert "Pays for these impacts" in content
+    for tier in ("**critical**", "**high**", "**medium**"):
+        assert tier in content
+    assert "Temporary freezing of funds" in content
+    assert "Block stuffing" in content
+
+
+def test_scope_limits_section_quotes_the_exclusions(tmp_path: Path) -> None:
+    content = write_candidate_file(_documented_record(), 1, tmp_path).read_text()
+    assert "## Scope limits and exclusions" in content
+    assert "compromised private key" in content
+    assert "legacy v1 vaults" in content
+    assert "Prioritized vulnerabilities" in content
+
+
+def test_program_resources_are_listed(tmp_path: Path) -> None:
+    content = write_candidate_file(_documented_record(), 1, tmp_path).read_text()
+    assert "## Program resources" in content
+    assert "https://acme.xyz/audit.pdf" in content
+
+
+def test_placeholder_audit_row_is_called_out(tmp_path: Path) -> None:
+    record = _bounty_record()
+    assert record.bounty_profile is not None
+    record.bounty_profile.audit_count = 1
+    record.bounty_profile.verified_audit_count = 0
+    record.bounty_profile.latest_audit_at = None
+    record.bounty_profile.days_since_latest_audit = None
+    record.bounty_profile.auditors = []
+    record.bounty_profile.audit_records = [
+        AuditRecord(
+            auditor="All Audits",
+            url="https://acme.xyz/security",
+            performed_at=date(2025, 10, 13),
+            is_placeholder=True,
+            placeholder_reason="auditor is 'All Audits', a category label rather than a firm",
+        )
+    ]
+    content = write_candidate_file(record, 1, tmp_path).read_text()
+    assert "row is a placeholder, not an audit" in content
+    assert "**Most recent audit**: UNDATED" in content
+    # The stale-audit warning must NOT fire off a date the program never gave.
+    assert "Over 18 months old" not in content
+
+
+def test_scope_assets_lift_into_the_frontmatter_without_the_prose(tmp_path: Path) -> None:
+    fm = _frontmatter_dict(_documented_record())
+
+    # The full in-scope list travels with the record, so Phase 2a does not have
+    # to re-derive it from the program page by hand.
+    assert [a["address"] for a in fm["bounty_scope_assets"]] == ["0x" + "ab" * 20, None]
+    assert fm["bounty_repo_scoped_assets"] == 1
+    assert fm["bounty_primacy_of_impact"] is True
+    assert set(fm["bounty_exclusion_sections"]) == {
+        "custom_out_of_scope",
+        "feasibility_limitations",
+        "prioritized_vulnerabilities",
+    }
+    # Exclusion prose is thousands of characters and belongs in the body.
+    assert "exclusions" not in fm["bounty_program_profile"]
+    assert "scope_assets" not in fm["bounty_program_profile"]
+    assert yaml.safe_load(yaml.safe_dump(fm))["bounty_scope_assets"][0]["explorer"] == "arbiscan.io"

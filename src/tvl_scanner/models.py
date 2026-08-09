@@ -119,6 +119,135 @@ class KnownIssue(BaseModel):
     related_impact: str | None = None
 
 
+class ScopeAsset(BaseModel):
+    """One row of a bounty program's assets-in-scope table, kept verbatim.
+
+    The scanner used to reduce the whole table to a count and one representative
+    address, which is not enough to start an audit: the standing rule is to
+    extract and verify the FULL in-scope list before writing a line of analysis,
+    and a count sends you back to the website to do it by hand.
+
+    `is_placeholder` marks Immunefi's Primacy-of-Impact sentinel row — an entry
+    whose url is `https://immunefi.com/` and whose only job is to carry
+    `isPrimacyOfImpact: true`. It is not a contract, and 80 of them are spread
+    across 61 programs in the 2026-08 catalogue, so counting them as scope
+    inflates criterion 8 for a quarter of the universe.
+    """
+
+    asset_type: str = Field(
+        ..., description="Immunefi's own label: smart_contract | websites_and_applications | blockchain_dlt"
+    )
+    url: str
+    description: str | None = None
+    address: str | None = Field(
+        default=None, description="EVM address parsed out of an explorer URL, when there is one"
+    )
+    repo: str | None = Field(
+        default=None,
+        description=(
+            "owner/repo[/path] when the asset points at GitHub. Repo- and "
+            "directory-level scope is a different audit shape from an address: it "
+            "usually means source review against a branch rather than a deployed "
+            "target, and the deployed code must be matched back by hand."
+        ),
+    )
+    explorer: str | None = Field(
+        default=None, description="Explorer host the address came from, e.g. 'arbiscan.io'"
+    )
+    added_at: date | None = None
+    revision: int = 0
+    primacy_of_impact: bool = False
+    safe_harbor: bool = False
+    is_placeholder: bool = Field(
+        default=False, description="Primacy-of-Impact sentinel row, not a real in-scope asset"
+    )
+    is_testnet: bool = False
+
+
+class ProgramImpact(BaseModel):
+    """One row of the program's own impact table.
+
+    Carried at every severity, not just critical. The rule for reading a program
+    is to take its impact rows verbatim across all tiers: a finding that maps to
+    no row is unpayable however good it is, and a reachable Low floor beats an
+    unreachable Critical ceiling.
+    """
+
+    severity: str
+    asset_type: str
+    title: str
+
+
+class AuditRecord(BaseModel):
+    """One entry of the program's self-declared audit list.
+
+    `is_placeholder` is the load-bearing field. Programs routinely fill this list
+    with a single link to their own security page under a non-name like "All
+    Audits", dated the day the bounty launched. That is a pointer, not a review,
+    and scoring it as one makes audit staleness read as program age. 16 of the
+    237 audit rows in the 2026-08 catalogue are placeholders by these tests.
+    """
+
+    auditor: str | None = None
+    url: str | None = None
+    performed_at: date | None = None
+    is_placeholder: bool = False
+    placeholder_reason: str | None = None
+
+
+class ProgramExclusions(BaseModel):
+    """The published limits on what a program will accept.
+
+    Immunefi splits this across seven prose fields that the scanner previously
+    read none of. They are where the auto-invalidators live: the feasibility
+    limitations alone run to ~1.4K characters on a typical program and decide
+    whether a whole class of finding is submittable. Reading them before picking
+    a target is cheaper than reading them after writing a report.
+
+    Every field is the program's text, truncated to `EXCLUSION_TEXT_CHARS`.
+    """
+
+    rules: str | None = Field(default=None, description="outOfScopeAndRules")
+    out_of_scope_general: str | None = None
+    out_of_scope_smart_contract: str | None = None
+    out_of_scope_blockchain: str | None = None
+    out_of_scope_web: str | None = None
+    custom_out_of_scope: str | None = None
+    feasibility_limitations: str | None = None
+    prohibited_activities: str | None = None
+    custom_prohibited_activities: list[str] = Field(default_factory=list)
+    prioritized_vulnerabilities: str | None = Field(
+        default=None,
+        description="What the program says it most wants — the inverse of an exclusion",
+    )
+
+    def published_sections(self) -> list[str]:
+        """Names of the sections this program actually filled in."""
+        named = [
+            ("rules", self.rules),
+            ("out_of_scope_general", self.out_of_scope_general),
+            ("out_of_scope_smart_contract", self.out_of_scope_smart_contract),
+            ("out_of_scope_blockchain", self.out_of_scope_blockchain),
+            ("out_of_scope_web", self.out_of_scope_web),
+            ("custom_out_of_scope", self.custom_out_of_scope),
+            ("feasibility_limitations", self.feasibility_limitations),
+            ("prohibited_activities", self.prohibited_activities),
+            ("prioritized_vulnerabilities", self.prioritized_vulnerabilities),
+        ]
+        out = [name for name, text in named if text]
+        if self.custom_prohibited_activities:
+            out.append("custom_prohibited_activities")
+        return out
+
+
+class ProgramResource(BaseModel):
+    """A link the program publishes about itself: docs, repo, audit report."""
+
+    kind: Literal["website", "repo", "audit"]
+    url: str
+    label: str | None = None
+
+
 class BountyProfile(BaseModel):
     """Bounty-program target-selection profile, extracted from the Immunefi catalogue.
 
@@ -150,6 +279,14 @@ class BountyProfile(BaseModel):
     reward_calculation_percentage: float | None = None
     ten_percent_economic_rule: bool = False
     poc_required_for_critical: bool | None = None
+    poc_required_tiers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Raw `pocPerTypeAndSeverity` rows, each '<assetType> - <severity>' "
+            "(e.g. 'smart_contract - critical'). Every program in the catalogue "
+            "publishes this list, and a mandatory PoC is real work to budget for."
+        ),
+    )
     payout_basis: str = Field(
         default="unspecified",
         description="One-line human summary of how a critical payout is actually computed",
@@ -182,22 +319,55 @@ class BountyProfile(BaseModel):
     known_issues_last_updated: date | None = None
 
     # --- 7. Audit history (recency half; the count lives on defillama_audit_count) ---
-    audit_count: int = 0
+    audit_count: int = Field(
+        default=0, description="Rows in the program's audit list, placeholders included"
+    )
+    verified_audit_count: int = Field(
+        default=0,
+        description=(
+            "Audit rows that name a real firm and are not dated to the program "
+            "launch. Only these set `latest_audit_at`, so a program whose whole "
+            "audit list is a link to its own security page reads as undated "
+            "rather than as freshly audited."
+        ),
+    )
+    audit_records: list[AuditRecord] = Field(default_factory=list)
     latest_audit_at: date | None = None
     days_since_latest_audit: int | None = None
     auditors: list[str] = Field(default_factory=list)
 
     # --- 8. Protocol architecture ---
-    smart_contract_assets: int = 0
+    scope_assets: list[ScopeAsset] = Field(
+        default_factory=list,
+        description="The full assets-in-scope table, Primacy-of-Impact placeholders included and flagged",
+    )
+    smart_contract_assets: int = Field(
+        default=0, description="Real smart-contract assets, excluding Primacy-of-Impact placeholders"
+    )
     web_app_assets: int = 0
     blockchain_dlt_assets: int = 0
+    repo_scoped_assets: int = Field(
+        default=0,
+        description=(
+            "In-scope assets that point at a repo or a path inside one rather "
+            "than at a deployed address. High counts mean source-level scope, "
+            "where the deployed code has to be matched back by hand."
+        ),
+    )
     primacy_of_impact: bool = False
     ecosystems: list[str] = Field(default_factory=list)
     program_types: list[str] = Field(default_factory=list)
     project_types: list[str] = Field(default_factory=list)
+    impacts: list[ProgramImpact] = Field(
+        default_factory=list, description="The program's own impact table, every severity and asset type"
+    )
     critical_impacts: list[str] = Field(
         default_factory=list, description="Titles of the in-scope critical-severity impacts"
     )
+
+    # --- Scope limits and published resources ---
+    exclusions: ProgramExclusions = Field(default_factory=ProgramExclusions)
+    resources: list[ProgramResource] = Field(default_factory=list)
 
     # --- 9. Recent upgrades / features ---
     newest_asset_added_at: date | None = None

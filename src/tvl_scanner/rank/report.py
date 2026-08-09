@@ -27,7 +27,7 @@ from typing import Any
 import yaml
 
 from tvl_scanner.config import settings
-from tvl_scanner.models import CandidateRecord
+from tvl_scanner.models import BountyProfile, CandidateRecord
 
 log = logging.getLogger(__name__)
 
@@ -287,6 +287,160 @@ def _summary_usage() -> str:
     )
 
 
+# Scope rows rendered in the markdown body before the table is summarised. A
+# 255-asset program is not a solo target anyway, and the full list still ships
+# in the frontmatter for anything that wants to process it.
+MAX_SCOPE_ROWS_RENDERED = 40
+
+# Longest exclusion excerpt quoted per section in the body.
+_EXCLUSION_EXCERPT_CHARS = 700
+
+_SEVERITY_ORDER = ("critical", "high", "medium", "low")
+
+
+def _impact_table(p: BountyProfile) -> list[str]:
+    """The program's own impact table, grouped by severity.
+
+    Rendered at every tier rather than critical-only. This is the rubric a
+    submission is actually judged against, and the reachable tier matters more
+    than the headline one: a finding that maps to no row is unpayable, and a
+    Medium row you can reach beats a Critical row you cannot.
+    """
+    sc = [i for i in p.impacts if i.asset_type == "smart_contract"]
+    if not sc:
+        return ["- **Impact table**: none published for smart contracts."]
+
+    out = ["- **Pays for these impacts** (the program's own table):"]
+    for severity in _SEVERITY_ORDER:
+        titles = [i.title for i in sc if i.severity == severity]
+        if not titles:
+            continue
+        out.append(f"  - **{severity}**:")
+        out.extend(f"    - {title}" for title in titles)
+    other = sorted({i.severity for i in sc} - set(_SEVERITY_ORDER))
+    for severity in other:
+        titles = [i.title for i in sc if i.severity == severity]
+        out.append(f"  - **{severity}**:")
+        out.extend(f"    - {title}" for title in titles)
+    return out
+
+
+def _scope_table_section(p: BountyProfile) -> list[str]:
+    """The full assets-in-scope table, verbatim.
+
+    The standing rule before any audit is to extract and verify the complete
+    in-scope list; a count sends you back to the program page to do it by hand.
+    Placeholder rows are shown as such rather than dropped, so this table and
+    the program page agree line for line.
+    """
+    if not p.scope_assets:
+        return []
+
+    real = [a for a in p.scope_assets if not a.is_placeholder]
+    lines = [
+        "## Assets in scope",
+        "",
+        f"{len(real)} listed asset(s). Verify every one against the program page before "
+        "starting: an out-of-scope asset is unsubmittable under Primacy of Rules, and the "
+        "listing can change between a scan and a submission.",
+        "",
+        "| Type | Target | Description | Added | POI |",
+        "|------|--------|-------------|-------|-----|",
+    ]
+    for asset in real[:MAX_SCOPE_ROWS_RENDERED]:
+        target = asset.address or asset.repo or asset.url
+        if asset.address and asset.explorer:
+            target = f"[`{asset.address}`]({asset.url})"
+        elif asset.repo:
+            target = f"[`{asset.repo}`]({asset.url})"
+        else:
+            target = f"[link]({asset.url})"
+        added = asset.added_at.isoformat() if asset.added_at else "—"
+        flags = "yes" if asset.primacy_of_impact else ""
+        if asset.is_testnet:
+            flags = (flags + " ⚠testnet").strip()
+        desc = (asset.description or "").replace("|", "\\|")
+        lines.append(f"| {asset.asset_type} | {target} | {desc} | {added} | {flags} |")
+    if len(real) > MAX_SCOPE_ROWS_RENDERED:
+        lines.append(
+            f"| … | *{len(real) - MAX_SCOPE_ROWS_RENDERED} more rows, omitted from this table* "
+            "| *full list in the YAML frontmatter* | | |"
+        )
+    lines.append("")
+
+    placeholders = [a for a in p.scope_assets if a.is_placeholder]
+    if placeholders:
+        lines.append(
+            f"{len(placeholders)} Primacy-of-Impact placeholder row(s) are excluded from the "
+            "table and from every scope count. They carry the POI flag and point at "
+            "immunefi.com rather than at a contract."
+        )
+        lines.append("")
+    return lines
+
+
+def _scope_limits_section(p: BountyProfile) -> list[str]:
+    """What the program will reject, in its own words.
+
+    These sections are where the auto-invalidators live: which actors are
+    assumed trusted, which preconditions are ruled infeasible, which activities
+    are prohibited outright. Reading them before picking a target is cheaper
+    than reading them after writing the report.
+    """
+    e = p.exclusions
+    sections = [
+        ("Program rules", e.rules),
+        ("Prioritized vulnerabilities (what they most want)", e.prioritized_vulnerabilities),
+        ("Out of scope — this program", e.custom_out_of_scope),
+        ("Out of scope — smart contracts", e.out_of_scope_smart_contract),
+        ("Out of scope — blockchain/DLT", e.out_of_scope_blockchain),
+        ("Out of scope — web & apps", e.out_of_scope_web),
+        ("Out of scope — general", e.out_of_scope_general),
+        ("Feasibility limitations", e.feasibility_limitations),
+        ("Prohibited activities", e.prohibited_activities),
+    ]
+    present = [(title, text) for title, text in sections if text]
+    if not present and not e.custom_prohibited_activities:
+        return []
+
+    lines = [
+        "## Scope limits and exclusions",
+        "",
+        "Quoted from the program, truncated. Read the full text on the program page before "
+        "submitting: a finding that lands in one of these sections is closed regardless of "
+        "quality, and the feasibility limitations in particular decide whether a whole "
+        "attack class is admissible.",
+        "",
+    ]
+    for title, text in present:
+        excerpt = " ".join(str(text).split())
+        if len(excerpt) > _EXCLUSION_EXCERPT_CHARS:
+            excerpt = excerpt[:_EXCLUSION_EXCERPT_CHARS].rstrip() + " […]"
+        lines.append(f"**{title}**")
+        lines.append("")
+        lines.append(f"> {excerpt}")
+        lines.append("")
+    if e.custom_prohibited_activities:
+        lines.append("**Prohibited activities added by this program**")
+        lines.append("")
+        for item in e.custom_prohibited_activities:
+            lines.append(f"- {' '.join(item.split())[:_EXCLUSION_EXCERPT_CHARS]}")
+        lines.append("")
+    return lines
+
+
+def _program_resources_section(p: BountyProfile) -> list[str]:
+    """Links the program publishes about itself."""
+    if not p.resources:
+        return []
+    lines = ["## Program resources", ""]
+    for resource in p.resources:
+        label = f" — {resource.label}" if resource.label else ""
+        lines.append(f"- **{resource.kind}**: {resource.url}{label}")
+    lines.append("")
+    return lines
+
+
 def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
     """Render the 12-criteria program profile for an immunefi-scan record.
 
@@ -377,6 +531,13 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
         )
     if p.poc_required_for_critical:
         lines.append("- **PoC required for critical**: yes — budget for a runnable exploit.")
+    elif p.poc_required_for_critical is False:
+        lines.append(
+            "- **PoC required for critical**: no — the program accepts a written impact "
+            "argument, so a finding can be submitted without a working harness."
+        )
+    if p.poc_required_tiers:
+        lines.append(f"- **PoC mandatory on**: {', '.join(f'`{t}`' for t in p.poc_required_tiers)}")
     lines.append("")
 
     # 4 + 5. Recency and age of the program
@@ -429,7 +590,18 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
     # independently-resolved audit-history section further down the record.
     lines.append("### 7. Audit history (per Immunefi)")
     lines.append("")
+    placeholders = [r for r in p.audit_records if r.is_placeholder]
     lines.append(f"- **Audits listed by Immunefi**: {p.audit_count}")
+    if placeholders:
+        noun = "row is" if len(placeholders) == 1 else "rows are"
+        lines.append(
+            f"- ⚠ **{len(placeholders)} of those {noun} a placeholder, not an audit** — a link "
+            "filed under a category label or dated to the day the bounty launched. Recency "
+            "below is taken from the real rows only:"
+        )
+        for record in placeholders[:3]:
+            target = f" ({record.url})" if record.url else ""
+            lines.append(f"  - {record.placeholder_reason}{target}")
     if p.auditors:
         lines.append(f"- **Auditors**: {', '.join(p.auditors)}")
     if p.latest_audit_at:
@@ -443,6 +615,12 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
                 "longer describes the deployed system — diff against the audited commit and "
                 "hunt in what changed since."
             )
+    elif p.audit_count:
+        lines.append(
+            "- **Most recent audit**: UNDATED — every listed row is a placeholder, so the "
+            "program says nothing about when it was last reviewed. Treat the coverage as "
+            "unknown and resolve it from the audit-history section below."
+        )
     else:
         lines.append(
             "- **Most recent audit**: not dated in the program record — see the audit-history "
@@ -457,6 +635,12 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
         f"- **In-scope assets**: {p.smart_contract_assets} smart contract, "
         f"{p.web_app_assets} web/app, {p.blockchain_dlt_assets} blockchain/DLT"
     )
+    if p.repo_scoped_assets:
+        lines.append(
+            f"- **{p.repo_scoped_assets} of those point at a repo or a path inside one**, not "
+            "a deployed address. Source-level scope: match the branch back to deployed "
+            "bytecode yourself before trusting that a finding is live."
+        )
     if p.primacy_of_impact:
         lines.append(
             "- **Primacy of Impact**: yes — impact on any contract of the protocol counts, "
@@ -466,10 +650,7 @@ def _bounty_profile_section(candidate: CandidateRecord) -> list[str]:
         lines.append(f"- **Ecosystems**: {', '.join(p.ecosystems)}")
     if p.project_types:
         lines.append(f"- **Project type**: {', '.join(p.project_types)}")
-    if p.critical_impacts:
-        lines.append("- **Pays critical for**:")
-        for impact in p.critical_impacts[:5]:
-            lines.append(f"  - {impact}")
+    lines.extend(_impact_table(p))
     lines.append("")
 
     # 9. Recent upgrades
@@ -763,6 +944,13 @@ def _candidate_body(candidate: CandidateRecord) -> str:
 
     # Full 12-criteria profile — only immunefi-scan candidates carry one.
     lines.extend(_bounty_profile_section(candidate))
+    if candidate.bounty_profile is not None:
+        # The program read as a document: what is in scope, what will be
+        # rejected, and what it publishes about itself. These decide whether a
+        # finding is submittable at all, which is upstream of how it scores.
+        lines.extend(_scope_table_section(candidate.bounty_profile))
+        lines.extend(_scope_limits_section(candidate.bounty_profile))
+        lines.extend(_program_resources_section(candidate.bounty_profile))
 
     lines.append("## Audit history")
     lines.append("")
@@ -863,9 +1051,25 @@ def _bounty_frontmatter(candidate: CandidateRecord) -> dict[str, Any]:
         "bounty_days_since_latest_audit": p.days_since_latest_audit,
         "bounty_assets_added_90d": p.assets_added_90d,
         "bounty_in_scope_contracts": p.smart_contract_assets,
+        "bounty_repo_scoped_assets": p.repo_scoped_assets,
+        "bounty_primacy_of_impact": p.primacy_of_impact,
+        "bounty_poc_required_for_critical": p.poc_required_for_critical,
+        "bounty_verified_audit_count": p.verified_audit_count,
         "bounty_critical_impacts": p.critical_impacts,
-        # Full profile + per-criterion scores, for anything that wants the detail.
-        "bounty_program_profile": p.model_dump(mode="json"),
+        # Every listed asset, so Phase 2a can lift the scope table rather than
+        # re-derive it from the program page by hand. Placeholder rows are
+        # dropped here: they are not assets, and the POI flag they carry is
+        # already on `bounty_primacy_of_impact`.
+        "bounty_scope_assets": [
+            a.model_dump(mode="json", exclude={"is_placeholder"})
+            for a in p.scope_assets
+            if not a.is_placeholder
+        ],
+        "bounty_exclusion_sections": p.exclusions.published_sections(),
+        # Full profile + per-criterion scores, for anything that wants the
+        # detail. The exclusion prose is omitted: it runs to thousands of
+        # characters per program and is rendered in the body, where it is read.
+        "bounty_program_profile": p.model_dump(mode="json", exclude={"exclusions", "scope_assets"}),
         "priority_formula": candidate.priority_formula,
         "priority_subscores": {
             "tvl": candidate.tvl_score,

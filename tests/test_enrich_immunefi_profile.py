@@ -12,6 +12,7 @@ from datetime import date
 from typing import Any
 
 from tvl_scanner.enrich.immunefi_profile import (
+    EXCLUSION_TEXT_CHARS,
     attach_payout_ratio,
     build_profile,
 )
@@ -253,6 +254,60 @@ def test_audit_recency_and_auditors() -> None:
     assert p.auditors == ["Zenith"]
 
 
+def test_category_label_auditor_is_a_placeholder_not_an_audit() -> None:
+    """"All Audits" + a link to the project's own security page is a pointer.
+
+    Twyne's entire audit list was one such row, dated to the launch date, which
+    made `days_since_latest_audit` equal `program_age_days` exactly. Criterion 7
+    carries the heaviest weight in the formula and was reading that number.
+    """
+    p = build_profile(
+        _program(
+            audits=[
+                {
+                    "auditor": "All Audits",
+                    "date": _ts("2026-03-17"),
+                    "url": "https://acme.gitbook.io/resources/security",
+                }
+            ]
+        ),
+        scan_date=SCAN,
+    )
+    assert p.audit_count == 1
+    assert p.verified_audit_count == 0
+    assert p.latest_audit_at is None
+    assert p.days_since_latest_audit is None
+    assert p.auditors == []
+    assert p.audit_records[0].is_placeholder is True
+    assert "category label" in (p.audit_records[0].placeholder_reason or "")
+
+
+def test_audit_dated_to_the_launch_date_is_a_placeholder() -> None:
+    """A real firm name does not rescue a row dated the day the bounty listed."""
+    p = build_profile(
+        _program(audits=[{"auditor": "Zenith", "date": _ts("2026-05-10")}]),  # == launchDate
+        scan_date=SCAN,
+    )
+    assert p.verified_audit_count == 0
+    assert p.latest_audit_at is None
+    assert "launch date" in (p.audit_records[0].placeholder_reason or "")
+
+
+def test_real_audits_survive_alongside_placeholders() -> None:
+    p = build_profile(
+        _program(
+            audits=[
+                {"auditor": "All Audits", "date": _ts("2026-05-10")},
+                {"auditor": "Zenith", "date": _ts("2026-03-17")},
+            ]
+        ),
+        scan_date=SCAN,
+    )
+    assert (p.audit_count, p.verified_audit_count) == (2, 1)
+    assert p.latest_audit_at == date(2026, 3, 17)
+    assert p.auditors == ["Zenith"]
+
+
 def test_future_dated_audit_is_ignored_for_recency() -> None:
     """A date ahead of the scan is a data error, not a fresh review."""
     p = build_profile(
@@ -305,6 +360,90 @@ def test_primacy_of_impact_flag() -> None:
         scan_date=SCAN,
     )
     assert p.primacy_of_impact is True
+
+
+def test_primacy_placeholder_is_not_counted_as_a_contract() -> None:
+    """The sentinel row is not an asset — 61 of 247 live programs publish one.
+
+    Twyne is the worked case: 16 assets, 15 real addresses plus this row. Both
+    counts appeared in the same record, and the inflated one fed criterion 8.
+    """
+    p = build_profile(
+        _program(
+            assets=[
+                {"type": "smart_contract", "url": "https://etherscan.io/address/0x1"},
+                {"type": "smart_contract", "url": "https://etherscan.io/address/0x2"},
+                {
+                    "type": "smart_contract",
+                    "url": "https://immunefi.com/",
+                    "description": "Primacy of Impact",
+                    "isPrimacyOfImpact": True,
+                },
+            ]
+        ),
+        scan_date=SCAN,
+    )
+    assert p.smart_contract_assets == 2
+    assert p.primacy_of_impact is True
+    # Kept in the table so the record and the program page agree line for line.
+    assert len(p.scope_assets) == 3
+    assert [a.is_placeholder for a in p.scope_assets] == [False, False, True]
+
+
+def test_scope_assets_carry_address_repo_and_flags() -> None:
+    p = build_profile(
+        _program(
+            assets=[
+                {
+                    "type": "smart_contract",
+                    "url": "https://arbiscan.io/address/0x" + "ab" * 20 + "#code",
+                    "description": "Vault Manager",
+                    "addedAt": _ts("2026-07-20"),
+                    "revision": 2,
+                    "isSafeHarbor": True,
+                },
+                {
+                    "type": "smart_contract",
+                    "url": "https://github.com/acme/core/tree/main/src/vault",
+                },
+                {"type": "smart_contract", "url": "https://sepolia.etherscan.io/address/0x9"},
+            ]
+        ),
+        scan_date=SCAN,
+    )
+    onchain, repo, testnet = p.scope_assets
+    assert onchain.address == "0x" + "ab" * 20
+    assert onchain.explorer == "arbiscan.io"
+    assert onchain.description == "Vault Manager"
+    assert onchain.revision == 2
+    assert onchain.safe_harbor is True
+    assert repo.repo == "acme/core/tree/main/src/vault"
+    assert repo.address is None
+    assert p.repo_scoped_assets == 1
+    assert testnet.is_testnet is True
+
+
+def test_impact_table_is_carried_at_every_severity() -> None:
+    """Only the critical tier used to survive; the reachable tier decides the hunt."""
+    p = build_profile(
+        _program(
+            impacts=[
+                {"type": "smart_contract", "severity": "critical", "title": "Direct theft"},
+                {"type": "smart_contract", "severity": "high", "title": "Temporary freezing"},
+                {"type": "smart_contract", "severity": "medium", "title": "Griefing"},
+                {"type": "websites_and_applications", "severity": "critical", "title": "XSS"},
+            ]
+        ),
+        scan_date=SCAN,
+    )
+    assert [(i.severity, i.title) for i in p.impacts] == [
+        ("critical", "Direct theft"),
+        ("high", "Temporary freezing"),
+        ("medium", "Griefing"),
+        ("critical", "XSS"),
+    ]
+    # critical_impacts stays the smart-contract critical subset it always was.
+    assert p.critical_impacts == ["Direct theft"]
 
 
 # --- 9. Recent upgrades / scope churn --------------------------------------
@@ -509,3 +648,141 @@ def test_level_gate_requires_all_three_signals() -> None:
 
 def test_no_level_gate_is_none() -> None:
     assert build_profile(_program(), scan_date=SCAN).researcher_level_gate is None
+
+
+# --- PoC requirement, exclusions and resources -----------------------------
+
+# The live catalogue never sets `pocRequired` on a reward row; it states the
+# same fact once, program-wide, in `pocPerTypeAndSeverity`. These fixtures drop
+# the per-row flag the base fixture carries so the program-list path is what is
+# under test.
+_REWARDS_WITHOUT_POC: list[dict[str, Any]] = [
+    {"severity": "critical", "assetType": "smart_contract", "maxReward": 250_000},
+    {"severity": "high", "assetType": "smart_contract", "maxReward": 50_000},
+]
+
+
+def test_poc_requirement_read_from_per_type_and_severity() -> None:
+    """Every live program publishes this list and the scanner read none of it.
+
+    The reward rows carry no `pocRequired` in the live catalogue, so every tier
+    of every record came out null while the program plainly stated the answer.
+    """
+    p = build_profile(
+        _program(
+            rewards=_REWARDS_WITHOUT_POC,
+            pocPerTypeAndSeverity=[
+                "smart_contract - critical",
+                "websites_and_applications - high",
+            ],
+        ),
+        scan_date=SCAN,
+    )
+    assert p.poc_required_tiers == [
+        "smart_contract - critical",
+        "websites_and_applications - high",
+    ]
+    assert p.poc_required_for_critical is True
+    by_severity = {t.severity: t.poc_required for t in p.reward_tiers if t.asset_type == "smart_contract"}
+    assert by_severity == {"critical": True, "high": False}
+
+
+def test_explicit_per_row_poc_flag_wins_over_the_program_list() -> None:
+    p = build_profile(
+        _program(
+            rewards=[
+                {
+                    "severity": "critical",
+                    "assetType": "smart_contract",
+                    "maxReward": 100_000,
+                    "pocRequired": False,
+                }
+            ],
+            pocPerTypeAndSeverity=["smart_contract - critical"],
+        ),
+        scan_date=SCAN,
+    )
+    assert p.poc_required_for_critical is False
+
+
+def test_missing_poc_list_leaves_the_requirement_unknown() -> None:
+    """Absent data stays None — the convention is unknown, never a silent False."""
+    p = build_profile(
+        _program(rewards=_REWARDS_WITHOUT_POC, pocPerTypeAndSeverity=[]), scan_date=SCAN
+    )
+    assert p.poc_required_tiers == []
+    assert p.poc_required_for_critical is None
+
+
+def test_exclusion_sections_are_extracted() -> None:
+    p = build_profile(
+        _program(
+            defaultOutOfScopeGeneral="Best practice recommendations are out of scope.",
+            defaultFeasibilityLimitations="Attacks requiring a compromised key are infeasible.",
+            defaultProhibitedActivities="No testing on mainnet.",
+            customOutOfScopeInformation="The legacy v1 vaults are excluded.",
+            customProhibitedActivities=["Do not contact the team directly."],
+            prioritizedVulnerabilities="Accounting drift in the credit vaults.",
+        ),
+        scan_date=SCAN,
+    )
+    e = p.exclusions
+    assert "compromised key" in (e.feasibility_limitations or "")
+    assert e.custom_out_of_scope == "The legacy v1 vaults are excluded."
+    assert e.custom_prohibited_activities == ["Do not contact the team directly."]
+    assert e.prioritized_vulnerabilities == "Accounting drift in the credit vaults."
+    assert set(e.published_sections()) == {
+        "out_of_scope_general",
+        "feasibility_limitations",
+        "prohibited_activities",
+        "custom_out_of_scope",
+        "custom_prohibited_activities",
+        "prioritized_vulnerabilities",
+    }
+
+
+def test_exclusion_text_is_capped_not_dropped() -> None:
+    p = build_profile(_program(defaultOutOfScopeGeneral="x" * 5_000), scan_date=SCAN)
+    assert len(p.exclusions.out_of_scope_general or "") == EXCLUSION_TEXT_CHARS
+
+
+def test_absent_exclusions_report_no_sections() -> None:
+    assert build_profile(_program(), scan_date=SCAN).exclusions.published_sections() == []
+
+
+def test_resources_collect_site_repo_and_audit_links_without_duplicates() -> None:
+    p = build_profile(
+        _program(
+            websiteUrl="https://acme.xyz",
+            githubUrl="https://github.com/acme/core",
+            audits=[
+                {"auditor": "Zenith", "date": _ts("2026-03-17"), "url": "https://acme.xyz/audit.pdf"},
+                {"auditor": "Zenith", "date": _ts("2026-03-18"), "url": "https://acme.xyz/audit.pdf"},
+            ],
+        ),
+        scan_date=SCAN,
+    )
+    assert [(r.kind, r.url) for r in p.resources] == [
+        ("website", "https://acme.xyz"),
+        ("repo", "https://github.com/acme/core"),
+        ("audit", "https://acme.xyz/audit.pdf"),
+    ]
+
+
+def test_non_http_resource_links_are_skipped() -> None:
+    p = build_profile(_program(websiteUrl="acme.xyz", githubUrl=None), scan_date=SCAN)
+    assert [r for r in p.resources if r.kind in ("website", "repo")] == []
+
+
+def test_empty_text_sentinels_are_not_treated_as_published_sections() -> None:
+    """Immunefi writes `_blank_` (118×), `.` (35×) and "To be determined" (34×).
+
+    Quoting those back would report a scope limit the program never wrote.
+    """
+    for sentinel in ("_blank_", ".", "To be determined.", "tbd", "  ", "N/A"):
+        p = build_profile(
+            _program(prioritizedVulnerabilities=sentinel, defaultOutOfScopeGeneral=sentinel),
+            scan_date=SCAN,
+        )
+        assert p.exclusions.prioritized_vulnerabilities is None, sentinel
+        assert p.exclusions.published_sections() == [], sentinel

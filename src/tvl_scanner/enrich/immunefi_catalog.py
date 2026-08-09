@@ -46,7 +46,11 @@ from tvl_scanner.enrich.immunefi_filter import (
     FilterFunnel,
     ProgramFilter,
 )
-from tvl_scanner.enrich.immunefi_profile import attach_payout_ratio, build_profile
+from tvl_scanner.enrich.immunefi_profile import (
+    TESTNET_MARKERS,
+    attach_payout_ratio,
+    build_profile,
+)
 from tvl_scanner.enrich.onchain_tvl import measure_onchain_tvl
 from tvl_scanner.enrich.scope_audits import extract_scope_audit_sources
 from tvl_scanner.models import (
@@ -78,15 +82,9 @@ _EXPLORER_CHAINS: list[tuple[str, Chain]] = [
 ]
 
 # Non-mainnet explorer subdomains — never treat these as a mainnet target.
-_TESTNET_MARKERS: tuple[str, ...] = (
-    "sepolia.",
-    "goerli.",
-    "hoodi.",
-    "holesky.",
-    "testnet.",
-    "-testnet",
-    "mumbai.",
-)
+# Single-sourced in immunefi_profile so the scope table and the chain resolver
+# cannot disagree about what a testnet URL is.
+_TESTNET_MARKERS: tuple[str, ...] = TESTNET_MARKERS
 
 # Immunefi `ecosystem` label → Chain (fallback when no in-scope address resolves).
 _ECOSYSTEM_CHAINS: dict[str, Chain] = {
