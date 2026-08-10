@@ -13,10 +13,14 @@ from pytest_httpx import HTTPXMock
 
 from tvl_scanner.enrich.defillama_protocols import (
     SCANNABLE_CATEGORIES,
+    _chain_tvls,
+    _derive_languages,
+    _passes_basic_filters,
     _pick_primary_chain,
+    _pick_primary_chain_and_tvl,
     discover_from_defillama_catalog,
 )
-from tvl_scanner.models import Chain, DiscoverySource
+from tvl_scanner.models import Chain, DiscoverySource, Language
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -76,6 +80,112 @@ def test_pick_primary_chain_picks_first_configured() -> None:
 def test_pick_primary_chain_none_if_all_out_of_scope() -> None:
     protocol = {"chains": ["Tron", "Fantom"]}
     assert _pick_primary_chain(protocol, {Chain.ARBITRUM}) is None
+
+
+# --- per-chain TVL attribution (the SUBFROST regression) ---------------------
+
+
+def test_chain_tvls_ignores_derived_buckets() -> None:
+    """DefiLlama mixes borrowed/pool2/staking aggregates into chainTvls."""
+    protocol = {
+        "chainTvls": {
+            "Ethereum": 500.0,
+            "Ethereum-borrowed": 9_999_999.0,
+            "Arbitrum": 1_200.0,
+            "borrowed": 4_000.0,
+            "pool2": 7_000.0,
+            "staking": 8_000.0,
+            "Tron": 3_000.0,
+        }
+    }
+    assert _chain_tvls(protocol) == {
+        Chain.ETHEREUM: 500.0,
+        Chain.ARBITRUM: 1_200.0,
+    }
+
+
+def test_picks_chain_holding_the_most_value_not_list_order() -> None:
+    """List order must not decide attribution when chainTvls is available."""
+    protocol = {
+        "chains": ["Ethereum", "Arbitrum"],
+        "tvl": 50_001_000.0,
+        "chainTvls": {"Ethereum": 1_000.0, "Arbitrum": 50_000_000.0},
+    }
+    chain, tvl = _pick_primary_chain_and_tvl(
+        protocol, {Chain.ETHEREUM, Chain.ARBITRUM}
+    )
+    assert chain == Chain.ARBITRUM
+    assert tvl == 50_000_000.0
+
+
+def test_subfrost_shape_reports_the_ethereum_leg_not_the_total() -> None:
+    """Regression: SUBFROST ranked #1 on 2026-08-10 with Bitcoin TVL on Ethereum.
+
+    Real values from api.llama.fi/protocols on 2026-08-10.
+    """
+    protocol = {
+        "chains": ["Bitcoin", "Ethereum"],
+        "tvl": 7_308_915.58,
+        "chainTvls": {"Ethereum": 6_050.08, "Bitcoin": 7_302_865.50},
+    }
+    chain, tvl = _pick_primary_chain_and_tvl(protocol, {Chain.ETHEREUM})
+    assert chain == Chain.ETHEREUM
+    assert tvl == 6_050.08  # NOT the $7.3M total, which sits on Bitcoin
+
+
+def test_subfrost_shape_fails_the_min_tvl_prefilter() -> None:
+    """The $6k Ethereum leg must not clear a $100k floor."""
+    protocol = {
+        "category": "Bridge",
+        "slug": "subfrost",
+        "chains": ["Bitcoin", "Ethereum"],
+        "tvl": 7_308_915.58,
+        "chainTvls": {"Ethereum": 6_050.08, "Bitcoin": 7_302_865.50},
+        "listedAt": 1785338211,
+    }
+    passes, chain, _first_seen, chain_tvl = _passes_basic_filters(
+        protocol, {Chain.ETHEREUM}, date(2026, 8, 10)
+    )
+    assert passes is False
+    assert chain is None
+    assert chain_tvl is None
+
+
+def test_falls_back_to_total_when_no_chain_tvls() -> None:
+    """Entries lacking chainTvls keep the old list-order + total behaviour."""
+    protocol = {"chains": ["Arbitrum"], "tvl": 250_000.0}
+    chain, tvl = _pick_primary_chain_and_tvl(protocol, {Chain.ARBITRUM})
+    assert chain == Chain.ARBITRUM
+    assert tvl == 250_000.0
+
+
+# --- language resolution (the SUBFROST solidity misattribution) --------------
+
+
+class _Repo:
+    def __init__(self, languages: list[str]) -> None:
+        self.languages = languages
+
+
+def test_repo_languages_override_the_chain_guess() -> None:
+    """A Rust-only repo on an EVM chain is Rust, not [solidity, rust]."""
+    assert _derive_languages(Chain.ETHEREUM, _Repo(["Rust"])) == [Language.RUST]
+
+
+def test_chain_guess_used_only_when_repo_reveals_nothing() -> None:
+    assert _derive_languages(Chain.ETHEREUM, None) == [Language.SOLIDITY]
+    assert _derive_languages(Chain.ETHEREUM, _Repo([])) == [Language.SOLIDITY]
+    # Unrecognised languages are not evidence either way → fall back to guess
+    assert _derive_languages(Chain.ETHEREUM, _Repo(["MDX", "Shell"])) == [
+        Language.SOLIDITY
+    ]
+
+
+def test_multi_language_repo_preserves_repo_order() -> None:
+    assert _derive_languages(Chain.ETHEREUM, _Repo(["Solidity", "Rust"])) == [
+        Language.SOLIDITY,
+        Language.RUST,
+    ]
 
 
 async def test_catalog_discovery_filters_by_category(

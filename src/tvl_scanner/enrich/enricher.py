@@ -66,12 +66,19 @@ CHAIN_DEFAULT_LANGUAGE: dict[Chain, Language] = {
 
 
 def _derive_languages(chain: Chain, repo: RepoMetadata | None) -> list[Language]:
-    """Combine chain heuristic with GitHub language data."""
-    langs: list[Language] = [CHAIN_DEFAULT_LANGUAGE[chain]]
-    if not repo or not repo.languages:
-        return langs
+    """Resolve languages, treating the repo's own language set as authoritative.
 
-    seen: set[Language] = set(langs)
+    The chain default is a guess and must not survive contact with evidence.
+    Seeding it and then appending repo languages produced `[solidity, rust]` for
+    Rust-only repos on EVM chains (see the SUBFROST case in
+    `defillama_protocols._derive_languages`). The guess now applies only when
+    the repo yields no recognised language.
+    """
+    if not repo or not repo.languages:
+        return [CHAIN_DEFAULT_LANGUAGE[chain]]
+
+    langs: list[Language] = []
+    seen: set[Language] = set()
     name_to_enum = {
         "solidity": Language.SOLIDITY,
         "rust": Language.RUST,
@@ -82,6 +89,8 @@ def _derive_languages(chain: Chain, repo: RepoMetadata | None) -> list[Language]
         if mapped and mapped not in seen:
             langs.append(mapped)
             seen.add(mapped)
+    if not langs:
+        return [CHAIN_DEFAULT_LANGUAGE[chain]]
     return langs
 
 
