@@ -159,6 +159,22 @@ def test_falls_back_to_total_when_no_chain_tvls() -> None:
     assert tvl == 250_000.0
 
 
+def test_does_not_steal_total_when_tvl_is_only_on_unmapped_chains() -> None:
+    """Bitcoin-only chainTvls must not fall back to the protocol-wide total.
+
+    `_chain_tvls` cannot map "Bitcoin", so the breakdown looks empty. Using
+    `tvl` here would reintroduce SUBFROST for protocols with no EVM leg at all.
+    """
+    protocol = {
+        "chains": ["Bitcoin", "Ethereum"],
+        "tvl": 50_000_000.0,
+        "chainTvls": {"Bitcoin": 50_000_000.0},
+    }
+    chain, tvl = _pick_primary_chain_and_tvl(protocol, {Chain.ETHEREUM})
+    assert chain is None
+    assert tvl is None
+
+
 # --- language resolution (the SUBFROST solidity misattribution) --------------
 
 

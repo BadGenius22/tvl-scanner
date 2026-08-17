@@ -85,3 +85,54 @@ async def test_catalog_handles_fetch_failure_gracefully(httpx_mock: HTTPXMock) -
     await catalog.load()
     assert catalog.is_loaded()
     assert catalog.lookup("uniswap") is None
+
+
+def test_lookup_prefers_the_row_on_the_requested_chain() -> None:
+    """Two protocols share a name; the Immunefi scope chain must win."""
+    catalog = DefiLlamaCatalog()
+    catalog._loaded = True
+    catalog._protocols = [
+        {
+            "slug": "katana-sol",
+            "name": "Katana",
+            "chains": ["Solana"],
+            "chainTvls": {"Solana": 1_446_469.0},
+            "tvl": 1_446_469.0,
+        },
+        {
+            "slug": "katana",
+            "name": "Katana",
+            "chains": ["Ethereum"],
+            "chainTvls": {"Ethereum": 1_500_000.0},
+            "tvl": 1_500_000.0,
+        },
+    ]
+    from tvl_scanner.models import Chain
+
+    match = catalog.lookup("Katana", prefer_chain=Chain.ETHEREUM)
+    assert match is not None
+    assert match["slug"] == "katana"
+
+
+def test_lookup_drops_weak_hits_on_the_wrong_chain() -> None:
+    """Prefix match to a different-chain leftover must not bind.
+
+    TruYields (Solana) used to inherit trufin-legacy-vaults ($7 on Ethereum)
+    via slug prefix `trufin`, which then scored as a 400,000% payout ratio.
+    """
+    catalog = DefiLlamaCatalog()
+    catalog._loaded = True
+    catalog._protocols = [
+        {
+            "slug": "trufin-legacy-vaults",
+            "name": "TruFin Legacy Vaults",
+            "chains": ["Ethereum"],
+            "chainTvls": {"Ethereum": 7.0},
+            "tvl": 7.0,
+        }
+    ]
+    from tvl_scanner.models import Chain
+
+    assert catalog.lookup("trufin", prefer_chain=Chain.SOLANA) is None
+    # Without a chain hint the prefix still matches (pool-path discovery).
+    assert catalog.lookup("trufin")["slug"] == "trufin-legacy-vaults"

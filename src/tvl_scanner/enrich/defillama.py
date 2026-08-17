@@ -23,8 +23,43 @@ import httpx
 
 from tvl_scanner.config import settings
 from tvl_scanner.http import get_json
+from tvl_scanner.models import Chain
 
 log = logging.getLogger(__name__)
+
+# DefiLlama `chains` / `chainTvls` keys that mean one of our Chain values.
+# Keep this local so lookup can stay chain-aware without importing the
+# catalog-path helpers (those import this module).
+_CHAIN_ALIASES: dict[Chain, frozenset[str]] = {
+    Chain.ETHEREUM: frozenset({"ethereum"}),
+    Chain.ARBITRUM: frozenset({"arbitrum"}),
+    Chain.BASE: frozenset({"base"}),
+    Chain.OPTIMISM: frozenset({"optimism"}),
+    Chain.POLYGON: frozenset({"polygon", "matic"}),
+    Chain.BSC: frozenset({"bsc", "binance"}),
+    Chain.SOLANA: frozenset({"solana"}),
+}
+
+
+def _protocol_chain_names(protocol: dict[str, Any]) -> set[str]:
+    """Lowercased chain names DefiLlama published for this row."""
+    names: set[str] = set()
+    raw_chains = protocol.get("chains") or []
+    if isinstance(raw_chains, list):
+        names.update(
+            c.strip().lower() for c in raw_chains if isinstance(c, str) and c.strip()
+        )
+    raw_ct = protocol.get("chainTvls")
+    if isinstance(raw_ct, dict):
+        for key in raw_ct:
+            if isinstance(key, str) and key.strip() and "-" not in key:
+                names.add(key.strip().lower())
+    names -= {"borrowed", "pool2", "staking"}
+    return names
+
+
+def _touches_chain(protocol: dict[str, Any], chain: Chain) -> bool:
+    return bool(_protocol_chain_names(protocol) & _CHAIN_ALIASES[chain])
 
 
 _SLUG_CLEAN = re.compile(r"[^a-z0-9]+")
@@ -96,7 +131,9 @@ class DefiLlamaCatalog:
         self._detail_cache[slug] = None
         return None
 
-    def lookup(self, query: str) -> dict[str, Any] | None:
+    def lookup(
+        self, query: str, *, prefer_chain: Chain | None = None
+    ) -> dict[str, Any] | None:
         """Return the best-matching protocol entry for `query`, or None.
 
         Match priority:
@@ -104,6 +141,15 @@ class DefiLlamaCatalog:
           2. Exact name match (`name == query`, case-insensitive)
           3. Slug prefix match (`slug.startswith(slugify(query))`)
           4. Substring name match (`query in name`, case-insensitive)
+
+        When `prefer_chain` is set, each tier prefers a row that actually
+        lists that chain. Prefix/substring hits on the *wrong* chain are
+        dropped rather than returned: that is how `lookup("katana")` bound
+        an Ethereum Immunefi program to Solana Katana, and `lookup("trufin")`
+        bound TruYields to `trufin-legacy-vaults` ($7 on Ethereum). Exact
+        slug/name still return a wrong-chain row when it is the only exact
+        match — the caller then leaves TVL unresolved instead of inventing a
+        weaker name hit.
         """
         if not self._loaded or not self._protocols or not query:
             return None
@@ -111,24 +157,41 @@ class DefiLlamaCatalog:
         q_slug = _slugify(query)
         q_lower = query.lower().strip()
 
-        exact_slug: dict[str, Any] | None = None
-        exact_name: dict[str, Any] | None = None
-        prefix_slug: dict[str, Any] | None = None
-        substring_name: dict[str, Any] | None = None
+        exact_slugs: list[dict[str, Any]] = []
+        exact_names: list[dict[str, Any]] = []
+        prefix_slugs: list[dict[str, Any]] = []
+        substring_names: list[dict[str, Any]] = []
 
         for p in self._protocols:
             slug = str(p.get("slug") or "").lower()
             name = str(p.get("name") or "").lower()
-            if slug == q_slug and exact_slug is None:
-                exact_slug = p
-            if name == q_lower and exact_name is None:
-                exact_name = p
-            if slug.startswith(q_slug) and q_slug and prefix_slug is None:
-                prefix_slug = p
-            if q_lower in name and q_lower and substring_name is None:
-                substring_name = p
+            if slug == q_slug:
+                exact_slugs.append(p)
+            elif name == q_lower:
+                exact_names.append(p)
+            elif q_slug and slug.startswith(q_slug):
+                prefix_slugs.append(p)
+            elif q_lower and q_lower in name:
+                substring_names.append(p)
 
-        return exact_slug or exact_name or prefix_slug or substring_name
+        def _pick(
+            matches: list[dict[str, Any]], *, weak: bool
+        ) -> dict[str, Any] | None:
+            if not matches:
+                return None
+            if prefer_chain is None:
+                return matches[0]
+            on_chain = [p for p in matches if _touches_chain(p, prefer_chain)]
+            if on_chain:
+                return on_chain[0]
+            return None if weak else matches[0]
+
+        return (
+            _pick(exact_slugs, weak=False)
+            or _pick(exact_names, weak=False)
+            or _pick(prefix_slugs, weak=True)
+            or _pick(substring_names, weak=True)
+        )
 
     def is_loaded(self) -> bool:
         return self._loaded

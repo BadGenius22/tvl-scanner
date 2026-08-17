@@ -169,17 +169,19 @@ def _pick_primary_chain(
     return None
 
 
-def _chain_tvls(protocol: dict[str, Any]) -> dict[Chain, float]:
-    """Parse DefiLlama's per-chain `chainTvls` into {Chain: usd}.
+_DERIVED_CHAIN_TVL = frozenset({"borrowed", "pool2", "staking"})
 
-    The flat `/protocols` catalog already carries this, so reading it costs no
-    extra HTTP call. Keys we must ignore: DefiLlama mixes derived buckets into
-    the same dict — hyphenated variants (`Ethereum-borrowed`, `Arbitrum-vesting`)
-    and bare aggregates (`borrowed`, `pool2`, `staking`). The hyphen check drops
-    the former; the latter map to no Chain and fall out naturally.
+
+def _raw_named_chain_tvls(protocol: dict[str, Any]) -> dict[str, float]:
+    """Named per-chain TVL buckets, including chains we cannot map.
+
+    DefiLlama mixes derived aggregates into `chainTvls`. Hyphenated variants
+    (`Ethereum-borrowed`) and bare rollups (`borrowed`/`pool2`/`staking`) are
+    not chains. Everything else is — Bitcoin, Hyperliquid L1, Monad, … —
+    even when this scanner has no `Chain` for them.
     """
     raw = protocol.get("chainTvls")
-    out: dict[Chain, float] = {}
+    out: dict[str, float] = {}
     if not isinstance(raw, dict):
         return out
     for name, value in raw.items():
@@ -187,10 +189,27 @@ def _chain_tvls(protocol: dict[str, Any]) -> dict[Chain, float]:
             continue
         if "-" in name:
             continue
-        mapped = DL_CHAIN_NAMES.get(name.strip().lower())
+        key = name.strip()
+        if not key or key.lower() in _DERIVED_CHAIN_TVL:
+            continue
+        out[key] = max(out.get(key, 0.0), float(value))
+    return out
+
+
+def _chain_tvls(protocol: dict[str, Any]) -> dict[Chain, float]:
+    """Parse DefiLlama's per-chain `chainTvls` into {Chain: usd}.
+
+    The flat `/protocols` catalog already carries this, so reading it costs no
+    extra HTTP call. Unmapped chain names (Bitcoin, …) are dropped here; call
+    `_raw_named_chain_tvls` when you need to know they exist so you do not
+    fall back to the protocol-wide total.
+    """
+    out: dict[Chain, float] = {}
+    for name, value in _raw_named_chain_tvls(protocol).items():
+        mapped = DL_CHAIN_NAMES.get(name.lower())
         if mapped is None:
             continue
-        out[mapped] = max(out.get(mapped, 0.0), float(value))
+        out[mapped] = max(out.get(mapped, 0.0), value)
     return out
 
 
@@ -218,6 +237,13 @@ def _pick_primary_chain_and_tvl(
     if in_scope:
         richest = max(in_scope, key=lambda c: in_scope[c])
         return richest, in_scope[richest]
+
+    # chainTvls named the money and none of it is on a configured chain.
+    # Falling through to protocol-wide `tvl` would reintroduce SUBFROST for
+    # the Bitcoin-only / Hyperliquid-only case, where `_chain_tvls` is empty
+    # because those names do not map to `Chain`.
+    if _raw_named_chain_tvls(protocol):
+        return None, None
 
     fallback = _pick_primary_chain(protocol, configured)
     if fallback is None:

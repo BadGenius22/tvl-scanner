@@ -12,8 +12,11 @@ from tvl_scanner.enrich.immunefi_catalog import (
     _build_candidate,
     _chain_from_explorer,
     _ecosystem_chain,
+    _has_unmapped_mainnet_explorer,
     _is_testnet,
+    _languages,
     _pick_scope,
+    _tvl_on_scope_chain,
     discover_from_immunefi_catalog,
 )
 from tvl_scanner.enrich.immunefi_filter import REASON_NO_CHAIN
@@ -87,6 +90,14 @@ def test_is_testnet_flags_non_mainnet_subdomains() -> None:
     assert not _is_testnet(f"https://etherscan.io/address/{EVM}")
 
 
+def test_is_testnet_flags_solana_cluster_query() -> None:
+    """TruYields listed explorer.solana.com/…?cluster=devnet as a live contract."""
+    assert _is_testnet(
+        "https://explorer.solana.com/address/6EZAJVrNQdnBJU6ULxXSDaEoK6fN7C3iXTCkZKRWDdGM?cluster=devnet"
+    )
+    assert not _is_testnet("https://explorer.solana.com/address/6EZAJVrNQdnBJU6ULxXSDaEoK6fN7C3iXTCkZKRWDdGM")
+
+
 # --- scope selection ---------------------------------------------------------
 
 
@@ -108,12 +119,80 @@ def test_pick_scope_skips_testnet_and_placeholder_assets() -> None:
     chain, addr, count = _pick_scope(prog, ALL)
     assert chain == Chain.ARBITRUM
     assert addr == EVM
-    assert count == 2  # placeholder excluded from the in-scope count
+    assert count == 1  # placeholder AND testnet excluded from the in-scope count
 
 
 def test_pick_scope_returns_none_when_chain_not_configured() -> None:
     chain, addr, _ = _pick_scope(_program(), {Chain.ARBITRUM})
     assert chain is None and addr is None
+
+
+def test_unmapped_explorer_is_not_an_ethereum_target() -> None:
+    """katanascan.com is Katana L2, not Ethereum, even if ecosystem says ETH."""
+    prog = _program(
+        slug="katana",
+        project="Katana",
+        ecosystem=["ETH"],
+        assets=[_sc("https://katanascan.com/address/" + EVM)],
+    )
+    assert _has_unmapped_mainnet_explorer(prog, ALL) is True
+    assert _build_candidate(prog, _catalog([]), ALL, date(2026, 8, 17)) is None
+
+
+def test_majority_unmapped_explorers_are_not_an_l1_target() -> None:
+    """Katana: ~18 katanascan rows + a handful of L1 OFT/bridge etherscan links.
+
+    Picking the first mapped explorer made it an Ethereum program with $0 TVL.
+    The L2 majority is the program; skip it.
+    """
+    katana = "https://katanascan.com/address/"
+    prog = _program(
+        slug="katana",
+        project="Katana",
+        ecosystem=["ETH"],
+        assets=[
+            _sc(katana + "0x" + "11" * 20),
+            _sc(katana + "0x" + "22" * 20),
+            _sc(katana + "0x" + "33" * 20),
+            _sc(f"https://etherscan.io/address/{EVM}"),  # L1 OFT leftover
+        ],
+    )
+    assert _has_unmapped_mainnet_explorer(prog, ALL) is True
+    assert _build_candidate(prog, _catalog([]), ALL, date(2026, 8, 17)) is None
+
+
+def test_testnet_explorer_beats_ecosystem_list_order() -> None:
+    """TruYields: Solana devnet + github, ecosystem starts with ETH."""
+    prog = _program(
+        slug="trufin",
+        project="TruYields",
+        ecosystem=["ETH", "Polygon", "Solana"],
+        language=["Solidity", "Rust"],
+        assets=[
+            _sc(
+                "https://explorer.solana.com/address/"
+                "6EZAJVrNQdnBJU6ULxXSDaEoK6fN7C3iXTCkZKRWDdGM?cluster=devnet"
+            ),
+            {
+                "type": "smart_contract",
+                "url": "https://github.com/TruFin-io/smart-contracts-solana-public",
+            },
+        ],
+    )
+    cand = _build_candidate(prog, _catalog([]), ALL, date(2026, 8, 17))
+    assert cand is not None
+    assert cand.chain == Chain.SOLANA
+
+
+def test_github_only_program_still_uses_ecosystem_fallback() -> None:
+    prog = _program(
+        ecosystem=["Solana"],
+        assets=[{"type": "smart_contract", "url": "https://github.com/TruFin-io/smart-contracts-solana-public"}],
+    )
+    assert _has_unmapped_mainnet_explorer(prog, ALL) is False
+    cand = _build_candidate(prog, _catalog([]), ALL, date(2026, 8, 17))
+    assert cand is not None
+    assert cand.chain == Chain.SOLANA
 
 
 def test_ecosystem_chain_fallback() -> None:
@@ -288,6 +367,79 @@ def test_build_candidate_attaches_the_bounty_profile() -> None:
     # unknown rather than dividing by a 0.0 placeholder.
     assert cand.tvl_resolved is False
     assert profile.max_payout_vs_tvl_pct is None
+
+
+def test_languages_prefer_program_list_over_chain_default() -> None:
+    """A Rust program with an Ethereum explorer row is Rust, not [solidity, rust]."""
+    prog = _program(language=["Rust"], ecosystem=["ETH"])
+    assert _languages(prog, Chain.ETHEREUM) == [Language.RUST]
+
+
+def test_languages_fall_back_to_chain_default_when_unpublished() -> None:
+    prog = _program(language=[])
+    assert _languages(prog, Chain.ETHEREUM) == [Language.SOLIDITY]
+    assert _languages(prog, Chain.SOLANA) == [Language.RUST]
+
+
+def test_tvl_uses_in_scope_chain_not_protocol_total() -> None:
+    """Regression: Immunefi-scan inherited the catalog path's SUBFROST bug.
+
+    A Bitcoin metaprotocol with a thin Ethereum explorer row must report the
+    Ethereum leg, not the $7.3M protocol-wide total.
+    """
+    dl = {
+        "slug": "subfrost",
+        "name": "SUBFROST",
+        "tvl": 7_308_915.58,
+        "chainTvls": {"Ethereum": 6_050.08, "Bitcoin": 7_302_865.50},
+        "category": "Bridge",
+    }
+    tvl, resolved = _tvl_on_scope_chain(dl, Chain.ETHEREUM)
+    assert resolved is True
+    assert tvl == 6_050.08
+
+
+def test_tvl_unresolved_when_money_sits_off_the_scope_chain() -> None:
+    """If chainTvls has no in-scope leg, do not steal the protocol total."""
+    dl = {
+        "slug": "offchain-only",
+        "tvl": 50_000_000.0,
+        "chainTvls": {"Bitcoin": 50_000_000.0},
+    }
+    tvl, resolved = _tvl_on_scope_chain(dl, Chain.ETHEREUM)
+    assert resolved is False
+    assert tvl == 0.0
+
+
+def test_tvl_falls_back_to_total_when_no_chain_tvls() -> None:
+    tvl, resolved = _tvl_on_scope_chain(
+        {"slug": "royco", "tvl": 5_000_000.0}, Chain.ETHEREUM
+    )
+    assert resolved is True
+    assert tvl == 5_000_000.0
+
+
+def test_build_candidate_does_not_inherit_off_chain_tvl() -> None:
+    prog = _program(slug="subfrost", project="SUBFROST")
+    catalog = _catalog(
+        [
+            {
+                "slug": "subfrost",
+                "name": "SUBFROST",
+                "tvl": 7_308_915.58,
+                "chainTvls": {"Ethereum": 6_050.08, "Bitcoin": 7_302_865.50},
+                "category": "Bridge",
+            }
+        ]
+    )
+    cand = _build_candidate(prog, catalog, ALL, date(2026, 8, 10))
+    assert cand is not None
+    assert cand.chain == Chain.ETHEREUM
+    assert cand.tvl_usd == 6_050.08
+    assert cand.tvl_resolved is True
+    # $6k is below the ratio floor, so criterion 3 must not see 400,000%.
+    assert cand.bounty_profile is not None
+    assert cand.bounty_profile.max_payout_vs_tvl_pct is None
 
 
 def test_payout_ratio_resolves_when_defillama_supplies_tvl() -> None:
