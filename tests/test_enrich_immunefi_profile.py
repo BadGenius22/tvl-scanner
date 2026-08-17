@@ -13,6 +13,7 @@ from typing import Any
 
 from tvl_scanner.enrich.immunefi_profile import (
     EXCLUSION_TEXT_CHARS,
+    RATIO_MIN_TVL_USD,
     attach_payout_ratio,
     build_profile,
 )
@@ -91,6 +92,38 @@ def test_reward_band_and_floors_extracted() -> None:
     # Lowest floor across every smart-contract tier, not just critical.
     assert p.min_bounty_usd == 10_000
     assert [t.severity for t in p.reward_tiers] == ["critical", "high"]
+
+
+def test_body_minimum_overrides_fixed_headline_when_a_percentage_is_set() -> None:
+    """Synthetix: structured row is fixed $100k + 10%; body says minimum $10k.
+
+    Scoring the $100k headline as the Critical *floor* inflated criterion 2.
+    The percentage makes the headline the cap; the body is the floor.
+    """
+    p = build_profile(
+        _program(
+            rewards=[
+                {
+                    "severity": "critical",
+                    "assetType": "smart_contract",
+                    "rewardModel": "fixed",
+                    "fixedReward": 100_000,
+                    "maxReward": 100_000,
+                    "rewardCalculationPercentage": 10,
+                }
+            ],
+            rewardsBody=(
+                "For critical Smart Contract bugs, the reward amount is __10%__ "
+                "of the funds directly affected up to a maximum of __USD $100,000__. "
+                "However, a minimum reward of __USD $10,000__ is to be rewarded."
+            ),
+        ),
+        scan_date=SCAN,
+    )
+    assert p.critical_min_usd == 10_000
+    assert p.critical_max_usd == 100_000
+    assert p.payout_basis.startswith("10% of funds at risk")
+    assert "minimum $10,000" in p.payout_basis
 
 
 def test_fixed_reward_supersedes_the_range() -> None:
@@ -183,6 +216,15 @@ def test_payout_ratio_needs_resolved_tvl() -> None:
     # produce a division or a confident zero.
     attach_payout_ratio(p, 0.0, False)
     assert p.max_payout_vs_tvl_pct is None
+
+    # Dust / wrong-row TVL is resolved but unusable as a ratio denominator.
+    # TruYields ($7) must not produce a 400,000% "pays of funds at risk" score.
+    attach_payout_ratio(p, 7.0, True)
+    assert p.max_payout_vs_tvl_pct is None
+    attach_payout_ratio(p, RATIO_MIN_TVL_USD - 1, True)
+    assert p.max_payout_vs_tvl_pct is None
+    attach_payout_ratio(p, RATIO_MIN_TVL_USD, True)
+    assert p.max_payout_vs_tvl_pct == 2500.0  # $250k / $10k
 
 
 # --- 4-5. Last update / program age ---------------------------------------
@@ -703,6 +745,54 @@ def test_explicit_per_row_poc_flag_wins_over_the_program_list() -> None:
         scan_date=SCAN,
     )
     assert p.poc_required_for_critical is False
+
+
+def test_rewards_body_poc_applies_to_smart_contracts_when_list_is_web_only() -> None:
+    """Synthetix publishes pocPerTypeAndSeverity for web only, then says
+    Critical and High need a PoC in rewardsBody. That is the SC answer."""
+    p = build_profile(
+        _program(
+            rewards=_REWARDS_WITHOUT_POC,
+            pocPerTypeAndSeverity=[
+                "websites_and_applications - critical",
+                "websites_and_applications - high",
+            ],
+            rewardsBody=(
+                "A PoC is required for the following severity levels:\n"
+                "  - Critical\n"
+                "  - High\n"
+            ),
+        ),
+        scan_date=SCAN,
+    )
+    assert p.poc_required_for_critical is True
+    by_severity = {
+        t.severity: t.poc_required
+        for t in p.reward_tiers
+        if t.asset_type == "smart_contract"
+    }
+    assert by_severity == {"critical": True, "high": True}
+
+
+def test_testnet_assets_are_kept_but_not_counted() -> None:
+    p = build_profile(
+        _program(
+            assets=[
+                {"type": "smart_contract", "url": "https://etherscan.io/address/0x1"},
+                {
+                    "type": "smart_contract",
+                    "url": (
+                        "https://explorer.solana.com/address/6EZA"
+                        "?cluster=devnet"
+                    ),
+                },
+            ]
+        ),
+        scan_date=SCAN,
+    )
+    assert p.smart_contract_assets == 1
+    assert len(p.scope_assets) == 2
+    assert p.scope_assets[1].is_testnet is True
 
 
 def test_missing_poc_list_leaves_the_requirement_unknown() -> None:

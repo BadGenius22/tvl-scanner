@@ -287,22 +287,62 @@ async def find_org_with_repos(
             continue
 
         contract_langs = set(_BYTES_PER_LOC.keys()) - {"TypeScript", "JavaScript"}
+
+        # Repos are requested `sort=updated`, so a bare first-match picks by
+        # RECENCY, which has no relationship to whether the repo is the
+        # protocol's own contract code. On SUBFROST that chose `qubitcoin`
+        # ("Bitcoin Core reimplemented in Rust", a node client) as the
+        # protocol's repo, and its 87k LOC became the candidate's loc_estimate.
+        #
+        # Prefer a repo whose NAME relates to the protocol before falling back
+        # to recency. This is a preference, not a solution: an org whose
+        # contract repo is named unlike the protocol still resolves by recency,
+        # and nothing here verifies the repo contains the DEPLOYED code.
+        eligible: list[dict[str, Any]] = []
         for repo in repos_payload:
             if not isinstance(repo, dict):
                 continue
             if repo.get("fork") or repo.get("archived"):
                 continue
             lang = repo.get("language")
-            if isinstance(lang, str) and lang in contract_langs:
-                url = repo.get("html_url")
-                if isinstance(url, str):
-                    _ORG_POSITIVE_CACHE[cache_key] = url
-                    log.info(
-                        "github: discovered %s via org-name guess (slug=%s)",
-                        url,
-                        slug,
-                    )
-                    return url
+            if not (isinstance(lang, str) and lang in contract_langs):
+                continue
+            if isinstance(repo.get("html_url"), str):
+                eligible.append(repo)
+
+        if eligible:
+            tokens = {t for t in re.split(r"[^a-z0-9]+", cache_key) if len(t) > 3}
+            if display_name:
+                tokens |= {
+                    t
+                    for t in re.split(r"[^a-z0-9]+", display_name.lower())
+                    if len(t) > 3
+                }
+
+            def _affine(repo: dict[str, Any], _tokens: set[str] = tokens) -> bool:
+                name = str(repo.get("name") or "").lower()
+                return any(t in name for t in _tokens)
+
+            match = next((r for r in eligible if _affine(r)), None)
+            picked = match or eligible[0]
+            url = str(picked["html_url"])
+            _ORG_POSITIVE_CACHE[cache_key] = url
+            if match is not None:
+                log.info(
+                    "github: discovered %s via org-name guess "
+                    "(slug=%s, name-affinity match)",
+                    url,
+                    slug,
+                )
+            else:
+                log.warning(
+                    "github: %s picked for slug=%s by RECENCY FALLBACK — no repo "
+                    "name relates to the protocol. Repo-derived fields "
+                    "(loc_estimate, languages, audits_folder) are unverified.",
+                    url,
+                    slug,
+                )
+            return url
 
         # Org has repos but none look like smart-contract code
         _ORG_NEGATIVE_CACHE.add(org_name)

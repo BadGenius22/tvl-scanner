@@ -116,11 +116,46 @@ CHAIN_DEFAULT_LANG: dict[Chain, Language] = {
     Chain.SOLANA: Language.RUST,
 }
 
+_LANG_NAME_TO_ENUM: dict[str, Language] = {
+    "solidity": Language.SOLIDITY,
+    "rust": Language.RUST,
+    "move": Language.MOVE,
+}
+
+
+def _derive_languages(chain: Chain, repo: Any) -> list[Language]:
+    """Resolve languages, treating the repo's own language set as authoritative.
+
+    The chain default is a GUESS ("it's on an EVM chain, so probably Solidity").
+    It must not survive contact with evidence. The previous version seeded the
+    guess and then *appended* repo languages, so a Rust-only repo on an EVM
+    chain came out `[solidity, rust]` — which is how SUBFROST, a Bitcoin
+    metaprotocol with zero Solidity in any of its 19 repos, was filed as a
+    Solidity target. Verified: `search/code?q=org:subfrost+extension:sol` → 0.
+
+    Now the guess is used only when the repo yields no recognised language.
+    """
+    resolved: list[Language] = []
+    seen: set[Language] = set()
+    if repo is not None and getattr(repo, "languages", None):
+        for lang_name in repo.languages:
+            mapped = _LANG_NAME_TO_ENUM.get(str(lang_name).lower())
+            if mapped and mapped not in seen:
+                resolved.append(mapped)
+                seen.add(mapped)
+    if resolved:
+        return resolved
+    return [CHAIN_DEFAULT_LANG[chain]]
+
 
 def _pick_primary_chain(
     protocol: dict[str, Any], configured: set[Chain]
 ) -> Chain | None:
-    """Choose the first chain that is both in the protocol's chain list AND configured."""
+    """Choose the first chain that is both in the protocol's chain list AND configured.
+
+    Order-based fallback used only when `chainTvls` is unusable. Prefer
+    `_pick_primary_chain_and_tvl`, which picks by value rather than list order.
+    """
     raw_chains = protocol.get("chains") or []
     if not isinstance(raw_chains, list):
         return None
@@ -132,6 +167,89 @@ def _pick_primary_chain(
         if mapped is not None and mapped in configured:
             return mapped
     return None
+
+
+_DERIVED_CHAIN_TVL = frozenset({"borrowed", "pool2", "staking"})
+
+
+def _raw_named_chain_tvls(protocol: dict[str, Any]) -> dict[str, float]:
+    """Named per-chain TVL buckets, including chains we cannot map.
+
+    DefiLlama mixes derived aggregates into `chainTvls`. Hyphenated variants
+    (`Ethereum-borrowed`) and bare rollups (`borrowed`/`pool2`/`staking`) are
+    not chains. Everything else is — Bitcoin, Hyperliquid L1, Monad, … —
+    even when this scanner has no `Chain` for them.
+    """
+    raw = protocol.get("chainTvls")
+    out: dict[str, float] = {}
+    if not isinstance(raw, dict):
+        return out
+    for name, value in raw.items():
+        if not isinstance(name, str) or not isinstance(value, (int, float)):
+            continue
+        if "-" in name:
+            continue
+        key = name.strip()
+        if not key or key.lower() in _DERIVED_CHAIN_TVL:
+            continue
+        out[key] = max(out.get(key, 0.0), float(value))
+    return out
+
+
+def _chain_tvls(protocol: dict[str, Any]) -> dict[Chain, float]:
+    """Parse DefiLlama's per-chain `chainTvls` into {Chain: usd}.
+
+    The flat `/protocols` catalog already carries this, so reading it costs no
+    extra HTTP call. Unmapped chain names (Bitcoin, …) are dropped here; call
+    `_raw_named_chain_tvls` when you need to know they exist so you do not
+    fall back to the protocol-wide total.
+    """
+    out: dict[Chain, float] = {}
+    for name, value in _raw_named_chain_tvls(protocol).items():
+        mapped = DL_CHAIN_NAMES.get(name.lower())
+        if mapped is None:
+            continue
+        out[mapped] = max(out.get(mapped, 0.0), value)
+    return out
+
+
+def _pick_primary_chain_and_tvl(
+    protocol: dict[str, Any], configured: set[Chain]
+) -> tuple[Chain | None, float | None]:
+    """Pick the configured chain holding the MOST value, and return that chain's TVL.
+
+    Two bugs this exists to fix, both measured on SUBFROST in the 2026-08-10 scan:
+
+    1. **Chain choice by list order.** `_pick_primary_chain` returns the first
+       configured entry in `chains`, so a protocol with $1k on Ethereum and $50M
+       on Arbitrum was attributed to whichever DefiLlama happened to list first.
+    2. **Total TVL attributed to one chain.** Callers used the protocol-wide
+       `tvl`, so SUBFROST — `chainTvls: {Ethereum: 6050, Bitcoin: 7302865}` —
+       was reported as a $7.3M *Ethereum* protocol. The Bitcoin leg is not on a
+       chain this scanner can read, and $6,050 is below MIN_TVL_USD, so the row
+       should never have been generated at all. It ranked #1.
+
+    Falls back to (list-order chain, protocol-wide tvl) only when `chainTvls`
+    yields nothing usable, preserving behaviour for entries that lack it.
+    """
+    per_chain = _chain_tvls(protocol)
+    in_scope = {c: v for c, v in per_chain.items() if c in configured}
+    if in_scope:
+        richest = max(in_scope, key=lambda c: in_scope[c])
+        return richest, in_scope[richest]
+
+    # chainTvls named the money and none of it is on a configured chain.
+    # Falling through to protocol-wide `tvl` would reintroduce SUBFROST for
+    # the Bitcoin-only / Hyperliquid-only case, where `_chain_tvls` is empty
+    # because those names do not map to `Chain`.
+    if _raw_named_chain_tvls(protocol):
+        return None, None
+
+    fallback = _pick_primary_chain(protocol, configured)
+    if fallback is None:
+        return None, None
+    total = protocol.get("tvl")
+    return fallback, float(total) if isinstance(total, (int, float)) else None
 
 
 def _extract_github_url(protocol: dict[str, Any]) -> str | None:
@@ -216,35 +334,43 @@ def _passes_basic_filters(
     protocol: dict[str, Any],
     configured_chains: set[Chain],
     scan_date: date,
-) -> tuple[bool, Chain | None, date | None]:
-    """Synchronous cheap pre-filter. Returns (passes, chain, first_seen).
+) -> tuple[bool, Chain | None, date | None, float | None]:
+    """Synchronous cheap pre-filter. Returns (passes, chain, first_seen, chain_tvl).
 
     Called BEFORE any HTTP work so we only spawn expensive per-protocol tasks
     for entries that actually survive category/tvl/chain/age thresholds.
+
+    The MIN_TVL_USD test runs against the value held on the *selected chain*,
+    not the protocol-wide total. A protocol with $7.3M on an unreadable chain
+    and $6k on Ethereum does not clear a $100k floor on Ethereum.
     """
     s = settings()
     category = str(protocol.get("category") or "")
     if category not in SCANNABLE_CATEGORIES:
-        return False, None, None
+        return False, None, None, None
 
-    tvl = protocol.get("tvl")
-    if not isinstance(tvl, (int, float)) or tvl < s.MIN_TVL_USD:
-        return False, None, None
+    # Cheap reject on the protocol-wide total first: it is an upper bound on any
+    # single chain's share, so anything failing here fails per-chain too.
+    total = protocol.get("tvl")
+    if not isinstance(total, (int, float)) or total < s.MIN_TVL_USD:
+        return False, None, None, None
 
-    chain = _pick_primary_chain(protocol, configured_chains)
+    chain, chain_tvl = _pick_primary_chain_and_tvl(protocol, configured_chains)
     if chain is None:
-        return False, None, None
+        return False, None, None, None
+    if chain_tvl is None or chain_tvl < s.MIN_TVL_USD:
+        return False, None, None, None
 
     first_seen = _first_seen(protocol, scan_date)
     age_days = (scan_date - first_seen).days
     if age_days < 0 or age_days > s.MAX_AGE_DAYS:
-        return False, None, None
+        return False, None, None, None
 
     slug = str(protocol.get("slug") or "").strip()
     if not slug:
-        return False, None, None
+        return False, None, None, None
 
-    return True, chain, first_seen
+    return True, chain, first_seen, chain_tvl
 
 
 async def _process_protocol(
@@ -254,6 +380,7 @@ async def _process_protocol(
     catalog: DefiLlamaCatalog,
     client: httpx.AsyncClient | None,
     price_cache: PriceCache | None = None,
+    chain_tvl: float | None = None,
 ) -> EnrichedCandidate | None:
     """Per-protocol HTTP work: detail fetch + github enrichment + bounty match.
 
@@ -265,7 +392,14 @@ async def _process_protocol(
         slug = str(protocol["slug"]).strip()
         name = str(protocol.get("name") or slug)
         category = str(protocol.get("category") or "")
-        tvl = float(protocol["tvl"])
+        # Value on THIS chain, not the protocol-wide total. The caller resolves
+        # it from `chainTvls`; the total is only a fallback for entries that
+        # publish no per-chain breakdown.
+        tvl = (
+            float(chain_tvl)
+            if chain_tvl is not None
+            else float(protocol["tvl"])
+        )
 
         # BATCH G fix #4: detail fetch for audit_count, audit_note, and
         # fallback github URL. BATCH H fix #1: this call now runs concurrently
@@ -365,19 +499,7 @@ async def _process_protocol(
                 if link not in merged_audit_links:
                     merged_audit_links.append(link)
 
-        languages: list[Language] = [CHAIN_DEFAULT_LANG[chain]]
-        if repo_metadata and repo_metadata.languages:
-            name_to_enum = {
-                "solidity": Language.SOLIDITY,
-                "rust": Language.RUST,
-                "move": Language.MOVE,
-            }
-            seen: set[Language] = set(languages)
-            for lang_name in repo_metadata.languages:
-                mapped = name_to_enum.get(lang_name.lower())
-                if mapped and mapped not in seen:
-                    languages.append(mapped)
-                    seen.add(mapped)
+        languages = _derive_languages(chain, repo_metadata)
 
         bounty_entry = bounty.match(display_name=name, defillama_slug=slug, target_name=slug)
         bounty_program = bounty_entry.platform if bounty_entry else "none"
@@ -781,19 +903,70 @@ async def discover_from_defillama_catalog(
     # Phase 1: cheap synchronous pre-filter to find which protocols are
     # worth the expensive HTTP work. Walks all 7000+ protocols but only
     # does dict lookups and arithmetic.
-    to_process: list[tuple[dict[str, Any], Chain, date]] = []
+    to_process: list[tuple[dict[str, Any], Chain, date, float | None]] = []
+    # Protocols whose money is real but sits on a chain this scanner cannot read
+    # (Bitcoin, Hyperliquid L1, Monad, ICP, Ripple, ...). Before per-chain TVL
+    # attribution these were scored as if the whole amount were on an EVM chain
+    # we scan, which is how SUBFROST ($7.3M on Bitcoin, $6k on Ethereum) ranked
+    # #1. They are now correctly excluded — but silently dropping 60+ funded
+    # protocols would trade one blind spot for another, so count and report them.
+    off_scope: list[tuple[str, float, str]] = []
+    s_cfg = settings()
+
     for protocol in catalog._protocols:
-        passes, chain, first_seen = _passes_basic_filters(
+        passes, chain, first_seen, chain_tvl = _passes_basic_filters(
             protocol, configured_chains, scan_date
         )
         if passes and chain and first_seen:
-            to_process.append((protocol, chain, first_seen))
+            to_process.append((protocol, chain, first_seen, chain_tvl))
+            continue
+
+        # Was this dropped only because the value lives off our chain set?
+        total = protocol.get("tvl")
+        if (
+            str(protocol.get("category") or "") in SCANNABLE_CATEGORIES
+            and isinstance(total, (int, float))
+            and total >= s_cfg.MIN_TVL_USD
+        ):
+            per_chain = _chain_tvls(protocol)
+            in_scope_max = max(
+                (v for c, v in per_chain.items() if c in configured_chains),
+                default=0.0,
+            )
+            if per_chain and in_scope_max < s_cfg.MIN_TVL_USD:
+                richest = max(per_chain, key=lambda c: per_chain[c], default=None)
+                where = richest.value if richest else "unsupported chain"
+                # Name the biggest chain even when it is one we cannot map
+                raw_ct = protocol.get("chainTvls")
+                if isinstance(raw_ct, dict):
+                    named = [
+                        (k, v)
+                        for k, v in raw_ct.items()
+                        if isinstance(k, str)
+                        and isinstance(v, (int, float))
+                        and "-" not in k
+                        and k.strip().lower() not in {"borrowed", "pool2", "staking"}
+                    ]
+                    if named:
+                        where = max(named, key=lambda kv: kv[1])[0]
+                off_scope.append((str(protocol.get("slug") or "?"), float(total), where))
 
     log.info(
         "defillama catalog pre-filter: %d of %d protocols qualify for enrichment",
         len(to_process),
         len(catalog._protocols),
     )
+
+    if off_scope:
+        off_scope.sort(key=lambda r: -r[1])
+        log.info(
+            "defillama catalog: %d funded protocols EXCLUDED because their TVL sits "
+            "on chains outside the configured set — not a clean sweep of DeFi, only "
+            "of %s. Largest: %s",
+            len(off_scope),
+            ",".join(sorted(c.value for c in configured_chains)),
+            "; ".join(f"{slug} (${tvl:,.0f} on {where})" for slug, tvl, where in off_scope[:8]),
+        )
 
     # Phase 2: concurrent per-protocol enrichment with bounded parallelism.
     # DefiLlama doesn't document a hard rate limit but 10 concurrent is well
@@ -802,15 +975,24 @@ async def discover_from_defillama_catalog(
     sem = asyncio.Semaphore(10)
 
     async def _bounded(
-        protocol: dict[str, Any], chain: Chain, first_seen: date
+        protocol: dict[str, Any],
+        chain: Chain,
+        first_seen: date,
+        chain_tvl: float | None,
     ) -> EnrichedCandidate | None:
         async with sem:
             return await _process_protocol(
-                protocol, chain, first_seen, catalog, client, price_cache=price_cache
+                protocol,
+                chain,
+                first_seen,
+                catalog,
+                client,
+                price_cache=price_cache,
+                chain_tvl=chain_tvl,
             )
 
     task_results = await asyncio.gather(
-        *(_bounded(p, c, fs) for (p, c, fs) in to_process)
+        *(_bounded(p, c, fs, ct) for (p, c, fs, ct) in to_process)
     )
 
     results = [r for r in task_results if r is not None]

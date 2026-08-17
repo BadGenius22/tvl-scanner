@@ -104,6 +104,11 @@ TESTNET_MARKERS: tuple[str, ...] = (
     "testnet.",
     "-testnet",
     "mumbai.",
+    # Solana explorers encode the cluster in the query, not the host:
+    # explorer.solana.com/address/…?cluster=devnet. Without this, TruYields'
+    # only "live" contract ranked as a mainnet Solana target.
+    "cluster=devnet",
+    "cluster=testnet",
 )
 
 # Immunefi's Primacy-of-Impact sentinel: an assets-in-scope row that is not an
@@ -391,6 +396,12 @@ def _asset_stats(assets: list[ScopeAsset], scan_date: date) -> dict[str, Any]:
             primacy = True
         if asset.is_placeholder:
             continue
+        # Testnet rows stay in `scope_assets` so the record matches the
+        # program page, but they are not a mainnet attack surface. Counting
+        # TruYields' `?cluster=devnet` staker as an in-scope contract is how
+        # a testnet listing ranked #3.
+        if asset.is_testnet:
+            continue
         if asset.asset_type in counts:
             counts[asset.asset_type] += 1
         if asset.repo:
@@ -625,8 +636,56 @@ def _leaderboard_stats(program: dict[str, Any]) -> tuple[int, int]:
     return researchers, total
 
 
+# Synthetix (and others) put the real Critical floor in `rewardsBody` while
+# the structured row is `fixedReward: 100000` + `rewardCalculationPercentage:
+# 10`. The headline is the cap; the body is "10% … minimum USD $10,000".
+_SC_CRITICAL_MIN_RE = re.compile(
+    r"for critical smart[\s\-/]*contract.{0,500}?"
+    r"minimum reward of\s*(?:[_*]{0,2})?(?:USD\s*)?\$?\s*([0-9][0-9,]*)",
+    re.IGNORECASE | re.DOTALL,
+)
+_POC_LEVELS_RE = re.compile(
+    r"a poc is required for the following severity levels:\s*"
+    r"((?:[-*]\s*\w+\s*)+)",
+    re.IGNORECASE,
+)
+
+
+def _critical_minimum_from_body(program: dict[str, Any]) -> int | None:
+    """The SC Critical *floor* as written in rewardsBody, or None.
+
+    Only used when the structured row also carries a percentage: a flat
+    `fixedReward` with no calculation is already the floor.
+    """
+    body = program.get("rewardsBody")
+    if not isinstance(body, str) or not body.strip():
+        return None
+    match = _SC_CRITICAL_MIN_RE.search(body)
+    if not match:
+        return None
+    try:
+        return int(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _poc_severities_from_body(program: dict[str, Any]) -> list[str]:
+    """Severity names listed under 'PoC is required for the following…'."""
+    body = program.get("rewardsBody")
+    if not isinstance(body, str) or not body.strip():
+        return []
+    match = _POC_LEVELS_RE.search(body)
+    if not match:
+        return []
+    return [s.lower() for s in re.findall(r"[-*]\s*(\w+)", match.group(1))]
+
+
 def _payout_basis(
-    critical: RewardTier | None, ten_percent_rule: bool, max_bounty: int | None
+    critical: RewardTier | None,
+    ten_percent_rule: bool,
+    max_bounty: int | None,
+    *,
+    floor_usd: int | None = None,
 ) -> str:
     """One-line plain-English summary of how a critical payout is computed."""
     if critical is None:
@@ -639,6 +698,8 @@ def _payout_basis(
 
     if pct:
         base = f"{pct:g}% of funds at risk, capped at {cap}"
+        if floor_usd:
+            base += f", minimum ${floor_usd:,}"
     elif critical.reward_model == "fixed":
         return f"flat {cap} — does NOT scale with funds at risk"
     elif critical.reward_model == "up_to":
@@ -664,13 +725,31 @@ def build_profile(program: dict[str, Any], *, scan_date: date) -> BountyProfile:
     contributes its known-issues and scope-churn signal.
     """
     poc_tiers = _poc_tiers(program)
-    tiers = _reward_tiers(program, _poc_required_keys(poc_tiers))
+    poc_keys = _poc_required_keys(poc_tiers)
+    # The structured list is often web-only (Synthetix: only
+    # websites_and_applications). The same page's rewardsBody then says
+    # "PoC is required for Critical and High" — that applies to SC too.
+    body_poc = _poc_severities_from_body(program)
+    if body_poc and not any(asset == SMART_CONTRACT for asset, _ in poc_keys):
+        for severity in body_poc:
+            poc_keys.add((SMART_CONTRACT, severity))
+    tiers = _reward_tiers(program, poc_keys)
     sc_tiers = [t for t in tiers if t.asset_type == SMART_CONTRACT]
     critical = next((t for t in sc_tiers if t.severity == "critical"), None)
 
     floors = [t.min_usd for t in sc_tiers if t.min_usd]
     max_bounty = _as_int(program.get("maxBounty"))
     ten_percent = bool(program.get("tenPercentEconomicRule"))
+    # fixedReward + a % calculation is a headline cap. The body minimum is
+    # the floor bounty_size_score should use (Synthetix: $10k, not $100k).
+    body_min = (
+        _critical_minimum_from_body(program)
+        if critical is not None and critical.calculation_percentage
+        else None
+    )
+    critical_min = critical.min_usd if critical else None
+    if body_min is not None and (critical_min is None or body_min < critical_min):
+        critical_min = body_min
 
     launched = _parse_date(program.get("launchDate"))
     updated = _parse_date(program.get("updatedDate"))
@@ -694,7 +773,7 @@ def build_profile(program: dict[str, Any], *, scan_date: date) -> BountyProfile:
         # 2. Maximum + minimum bounty
         max_bounty_usd=max_bounty,
         min_bounty_usd=min(floors) if floors else None,
-        critical_min_usd=critical.min_usd if critical else None,
+        critical_min_usd=critical_min,
         critical_max_usd=critical.max_usd if critical else None,
         reward_tiers=tiers,
         # 3. Bounty calculation
@@ -703,7 +782,9 @@ def build_profile(program: dict[str, Any], *, scan_date: date) -> BountyProfile:
         ten_percent_economic_rule=ten_percent,
         poc_required_for_critical=critical.poc_required if critical else None,
         poc_required_tiers=poc_tiers,
-        payout_basis=_payout_basis(critical, ten_percent, max_bounty),
+        payout_basis=_payout_basis(
+            critical, ten_percent, max_bounty, floor_usd=body_min
+        ),
         # max_payout_vs_tvl_pct is filled by the caller once TVL resolves.
         # 4. Last update
         program_updated_at=updated,
@@ -770,6 +851,13 @@ def build_profile(program: dict[str, Any], *, scan_date: date) -> BountyProfile:
     )
 
 
+# Denominator below this is not "funds at risk" — it is dust, a leftover
+# listing, or a DefiLlama name-match to the wrong row. TruYields ranked #4
+# on 2026-08-09 because $30k / $7 = 406,000% maxed criterion 3. Hashflow's
+# real $241k / $50k = 20.8% is well above this floor and still scores.
+RATIO_MIN_TVL_USD = 10_000.0
+
+
 def attach_payout_ratio(profile: BountyProfile, tvl_usd: float, tvl_resolved: bool) -> None:
     """Fill `max_payout_vs_tvl_pct` once the candidate's TVL is known.
 
@@ -777,8 +865,16 @@ def attach_payout_ratio(profile: BountyProfile, tvl_usd: float, tvl_resolved: bo
     discovery flow (DefiLlama match, then an on-chain fallback), and this ratio
     is the single most decision-relevant number in criterion 3: it converts the
     advertised cap into the fraction of at-risk funds a critical actually pays.
+
+    A resolved but tiny TVL is still shown on the candidate (honest dust), but
+    it is not a usable ratio denominator — leave the percentage unknown so
+    criterion 3 scores the reward *model* only.
     """
-    if not tvl_resolved or tvl_usd <= 0 or not profile.max_bounty_usd:
+    if (
+        not tvl_resolved
+        or tvl_usd < RATIO_MIN_TVL_USD
+        or not profile.max_bounty_usd
+    ):
         profile.max_payout_vs_tvl_pct = None
         return
     profile.max_payout_vs_tvl_pct = round(profile.max_bounty_usd / tvl_usd * 100.0, 4)

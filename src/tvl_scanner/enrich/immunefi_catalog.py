@@ -34,7 +34,11 @@ import httpx
 
 from tvl_scanner.enrich import immunefi
 from tvl_scanner.enrich.defillama import DefiLlamaCatalog
-from tvl_scanner.enrich.defillama_protocols import CHAIN_DEFAULT_LANG
+from tvl_scanner.enrich.defillama_protocols import (
+    CHAIN_DEFAULT_LANG,
+    _chain_tvls,
+    _raw_named_chain_tvls,
+)
 from tvl_scanner.enrich.etherscan import fetch_creation_dates_batch
 from tvl_scanner.enrich.github import enrich_repo
 from tvl_scanner.enrich.homepage_scrape import (
@@ -145,9 +149,9 @@ def _pick_scope(
         # Primacy-of-Impact placeholder assets point at immunefi.com, not a contract.
         if not url or "immunefi.com" in url:
             continue
-        count += 1
         if _is_testnet(url):
             continue
+        count += 1
         chain = _chain_from_explorer(url)
         if chain is None or chain not in configured:
             continue
@@ -160,6 +164,59 @@ def _pick_scope(
     if evm_hit is not None:
         return evm_hit[0], evm_hit[1], count
     return chain_seen, None, count
+
+
+def _explorer_partition(
+    program: dict[str, Any], configured: set[Chain]
+) -> tuple[int, int, Chain | None]:
+    """Split in-scope explorers into mapped / unmapped, plus a testnet chain hint.
+
+    Returns (mapped_mainnet, unmapped_mainnet, testnet_hint). Testnet rows are
+    not a chain we can hunt, but they *do* tell us which ecosystem the program
+    is actually about — TruYields lists Solana devnet + a Solana github repo
+    and `ecosystem: [ETH, Polygon, Solana]`; without the hint the fallback
+    picked ETH and bound DefiLlama's $7 Ethereum leftover.
+
+    Unmapped mainnet explorers (katanascan, snowtrace, …) are a chain this
+    scanner cannot read. A program whose *majority* of explorer rows are
+    unmapped is not an Ethereum target just because two OFT adapters also
+    have an etherscan link.
+    """
+    mapped = 0
+    unmapped = 0
+    testnet_hint: Chain | None = None
+    for asset in program.get("assets") or []:
+        if not isinstance(asset, dict) or asset.get("type") != "smart_contract":
+            continue
+        url = str(asset.get("url") or "")
+        if not url or "immunefi.com" in url or "github.com" in url.lower():
+            continue
+        chain = _chain_from_explorer(url)
+        if _is_testnet(url):
+            if (
+                testnet_hint is None
+                and chain is not None
+                and chain in configured
+            ):
+                testnet_hint = chain
+            continue
+        if chain is None or chain not in configured:
+            unmapped += 1
+        else:
+            mapped += 1
+    return mapped, unmapped, testnet_hint
+
+
+def _has_unmapped_mainnet_explorer(
+    program: dict[str, Any], configured: set[Chain]
+) -> bool:
+    """True when unmapped explorers outnumber ones we can read.
+
+    Kept as a named predicate so tests can assert the Katana shape without
+    going through the full builder.
+    """
+    mapped, unmapped, _hint = _explorer_partition(program, configured)
+    return unmapped > mapped
 
 
 
@@ -247,12 +304,59 @@ def _dl_audit_count(raw: Any) -> int | None:
 
 
 def _languages(program: dict[str, Any], chain: Chain) -> list[Language]:
-    langs = [CHAIN_DEFAULT_LANG[chain]]
+    """Prefer the program's own language list; the chain default is a guess.
+
+    Seeding Solidity because the in-scope explorer is etherscan, then appending
+    Immunefi's list, is how a Rust/Bitcoin metaprotocol with an Ethereum
+    explorer row was filed as Solidity. The guess applies only when the
+    program publishes no recognised language.
+    """
+    resolved: list[Language] = []
+    seen: set[Language] = set()
     for raw in program.get("language") or []:
         mapped = _LANG_NAMES.get(str(raw).strip().lower())
-        if mapped is not None and mapped not in langs:
-            langs.append(mapped)
-    return langs
+        if mapped is not None and mapped not in seen:
+            resolved.append(mapped)
+            seen.add(mapped)
+    if resolved:
+        return resolved
+    return [CHAIN_DEFAULT_LANG[chain]]
+
+
+def _tvl_on_scope_chain(
+    dl: dict[str, Any] | None, chain: Chain
+) -> tuple[float, bool]:
+    """TVL sitting on the Immunefi in-scope chain, not the protocol-wide total.
+
+    Same defect the catalog path fixed for SUBFROST: DefiLlama's `tvl` is the
+    sum across every chain the protocol exists on. A bounty whose in-scope
+    contracts are on Ethereum must not inherit $7.3M of Bitcoin TVL (or any
+    other unreadable chain). When `chainTvls` says the money is elsewhere,
+    leave TVL unresolved so the on-chain fallback can try, rather than
+    scoring a confident wrong number.
+    """
+    if not dl:
+        return 0.0, False
+    per_chain = _chain_tvls(dl)
+    if chain in per_chain:
+        value = per_chain[chain]
+        return (value, True) if value > 0 else (0.0, False)
+    named = _raw_named_chain_tvls(dl)
+    if named:
+        richest_name = max(named, key=lambda n: named[n])
+        log.info(
+            "immunefi catalog: %s DefiLlama TVL sits on %s, not in-scope %s — "
+            "leaving unresolved rather than attributing $%s",
+            dl.get("slug") or dl.get("name") or "?",
+            richest_name,
+            chain.value,
+            f"{sum(named.values()):,.0f}",
+        )
+        return 0.0, False
+    raw = dl.get("tvl")
+    if isinstance(raw, (int, float)) and raw > 0:
+        return float(raw), True
+    return 0.0, False
 
 
 def _build_candidate(
@@ -278,8 +382,15 @@ def _build_candidate(
     max_bounty = int(max_bounty_raw) if isinstance(max_bounty_raw, (int, float)) else None
 
     chain, evm_addr, in_scope_count = _pick_scope(program, configured)
+    mapped, unmapped, testnet_hint = _explorer_partition(program, configured)
+    # Majority-unmapped (Katana: ~18 katanascan vs 4 L1 OFT/bridge rows) is
+    # not an Ethereum program. Skip rather than scoring the L1 leftovers.
+    if unmapped > mapped:
+        return None
     if chain is None:
-        chain = _ecosystem_chain(program, configured)
+        # Testnet explorers we *can* map beat ecosystem-list order. TruYields
+        # would otherwise become Ethereum because ETH is first in `ecosystem`.
+        chain = testnet_hint or _ecosystem_chain(program, configured)
     if chain is None:
         return None  # no in-scope contract on any supported chain — caller counts it
 
@@ -287,7 +398,9 @@ def _build_candidate(
     onchain_address = f"{chain.value}:{evm_addr}" if evm_addr else None
 
     # DefiLlama match → TVL, category, DefiLlama audit count/links.
-    dl = catalog.lookup(project) or (catalog.lookup(slug) if slug != project else None)
+    dl = catalog.lookup(project, prefer_chain=chain) or (
+        catalog.lookup(slug, prefer_chain=chain) if slug != project else None
+    )
     tvl = 0.0
     category: str | None = None
     dl_slug: str | None = None
@@ -299,11 +412,7 @@ def _build_candidate(
     # bare 0.0 that the report then printed as a confident "$0".
     tvl_resolved = False
     if dl:
-        raw_tvl = dl.get("tvl")
-        if isinstance(raw_tvl, (int, float)) and raw_tvl > 0:
-            tvl, tvl_resolved = float(raw_tvl), True
-        else:
-            tvl = 0.0
+        tvl, tvl_resolved = _tvl_on_scope_chain(dl, chain)
         category = str(dl["category"]) if dl.get("category") else None
         dl_slug = str(dl["slug"]) if dl.get("slug") else None
         dl_count = _dl_audit_count(dl.get("audits"))
