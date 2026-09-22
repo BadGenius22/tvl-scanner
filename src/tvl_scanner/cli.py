@@ -483,6 +483,62 @@ def deploy_watch(
     console.print(f"\n[bold green]✓ Deploy-watch report written:[/] {summary}")
 
 
+@app.command("recon")
+def recon(
+    top: int = typer.Option(
+        20, "--top", help="How many shortlisted candidates to recon (score-ranked within each source)."
+    ),
+    from_: str = typer.Option(
+        "union",
+        "--from",
+        help="Shortlist source: 'run' (TVL scan), 'immunefi' (bounty scan), or 'union' (default).",
+    ),
+    min_tvl: int | None = typer.Option(
+        None, "--min-tvl", help="TVL floor (USD). Defaults to MIN_TVL_USD ($100K)."
+    ),
+    targets: str | None = typer.Option(
+        None, "--targets", help="Comma-separated target slugs to recon (overrides the shortlist)."
+    ),
+    refresh_cache: bool = typer.Option(
+        False, "--refresh-cache", help="Re-download repo snapshots even when cached."
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="Python logging level."),
+) -> None:
+    """Code-level recon on shortlisted candidates: git delta on fund-exit paths + repo marker greps.
+
+    The middle layer of the funnel: takes the ranked shortlists the scan entry
+    points persisted (artifacts/ranked-*.json), diffs each candidate's repo over
+    a baseline window (audit date when known, else the trailing 90 days) for
+    fund-exit-path churn, greps a source snapshot for privileged/oracle/proxy
+    markers, and scores attack surface 0-10. Bounty-backed targets are routed
+    to the deep-audit chain; no-program targets to a pre-bounty watchlist entry.
+    """
+    _setup_logging(log_level)
+    from tvl_scanner.recon import ShortlistError, run_recon
+
+    target_set: set[str] | None = (
+        {t.strip().lower() for t in targets.split(",") if t.strip()} if targets else None
+    )
+    console.print(
+        f"[bold cyan]tvl-scanner {__version__}[/]  recon  source={from_}  top={top}"
+        f"{f'  targets={len(target_set)}' if target_set else ''}"
+    )
+    try:
+        summary = asyncio.run(
+            run_recon(
+                from_=from_,
+                top=top,
+                min_tvl=min_tvl,
+                targets=target_set,
+                refresh_cache=refresh_cache,
+            )
+        )
+    except ShortlistError as exc:
+        console.print(f"[bold red]✗ {exc}[/]")
+        raise typer.Exit(code=1) from None
+    console.print(f"\n[bold green]✓ Recon report written:[/] {summary}")
+
+
 @app.command("check-secrets")
 def check_secrets() -> None:
     """Verify all pass-backed API keys are reachable. Does NOT print the secret values."""

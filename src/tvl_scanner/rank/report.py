@@ -18,6 +18,7 @@ in the plan file — field names are the handoff contract with the vault.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from datetime import date
@@ -1176,6 +1177,37 @@ def write_candidate_file(
     body = _candidate_body(candidate)
     content = f"---\n{yaml_text}---\n\n{body}"
     path.write_text(content)
+    return path
+
+
+def write_ranked(
+    ranked: list[CandidateRecord],
+    scan_date: date,
+    label: str = "scan",
+    *,
+    path: Path | None = None,
+) -> Path:
+    """Persist the ranked shortlist as JSON under `artifacts/ranked-{label}.json`.
+
+    The ranked list otherwise exists only as markdown (`reports/...`), which the
+    recon stage cannot read back machine-readably. Layout: a small header
+    (label, scan_date, priority_formula) plus the full CandidateRecord dumps —
+    `recon.shortlist.load_ranked` is the read path. Mirrors the
+    stage-boundary writers (write_candidates / write_enriched /
+    write_audit_status): a debugging/inspection aid that alternate entry
+    points can also consume.
+    """
+    s = settings()
+    path = path or (s.artifacts_path / f"ranked-{label}.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "label": label,
+        "scan_date": scan_date.isoformat(),
+        "priority_formula": ranked[0].priority_formula if ranked else None,
+        "candidates": [c.model_dump(mode="json") for c in ranked],
+    }
+    path.write_text(json.dumps(payload, indent=2, default=str))
+    log.info("wrote %d ranked records to %s", len(ranked), path)
     return path
 
 

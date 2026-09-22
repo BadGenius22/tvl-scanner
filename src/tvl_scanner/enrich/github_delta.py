@@ -133,6 +133,42 @@ async def get_head_sha(
     return sha if isinstance(sha, str) else None
 
 
+async def get_commit_before(
+    owner: str,
+    repo: str,
+    until_iso: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> str | None:
+    """Newest commit on the default branch at or before `until_iso` (ISO 8601).
+
+    `GET /commits?until=...&per_page=1`. The recon stage uses this to turn an
+    audit DATE into an audit COMMIT — the diff baseline for the fund-path
+    delta window. GitHub's `until` filters on commit date, so the returned sha
+    is the state of the repo when the audit started seeing code. Returns None
+    on any failure (repo younger than the date, transient error) — a missing
+    baseline degrades to the time-window fallback and never aborts the run.
+    """
+    s = settings()
+    try:
+        raw: Any = await get_json(
+            f"{s.GITHUB_API_BASE}/repos/{owner}/{repo}/commits",
+            params={"until": until_iso, "per_page": 1},
+            headers=_auth_headers(),
+            client=client,
+        )
+    except HttpError as exc:
+        log.info(
+            "github_delta: commits?until lookup failed for %s/%s (%s)", owner, repo, exc
+        )
+        return None
+    if not isinstance(raw, list) or not raw or not isinstance(raw[0], dict):
+        # An empty list means no commit predates `until` (young repo).
+        return None
+    sha = raw[0].get("sha")
+    return sha if isinstance(sha, str) else None
+
+
 # Branch names that suggest an audit line: `audit/*`, or a known audit firm.
 _AUDIT_BRANCH_RE = re.compile(
     r"audit|bailsec|cyfrin|certora|zenith|spearbit|trail.?of.?bits|sherlock|"

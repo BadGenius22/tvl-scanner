@@ -191,6 +191,49 @@ def save_state(state: dict[str, dict[str, str]], path: Path | None = None) -> No
 # ---------------------------------------------------------------------------
 
 
+_NON_CODE_EXTENSIONS = (
+    ".md", ".txt", ".rst", ".pdf",
+    ".json", ".yaml", ".yml", ".toml", ".lock", ".cfg", ".ini", ".env", ".csv",
+    ".spec", ".conf",
+    ".svg", ".png", ".jpg", ".jpeg", ".gif",
+)
+
+# Non-production dirs: tests/mocks + formal-verification, deploy, audit, docs.
+_NON_PRODUCTION_DIRS = {
+    "test", "tests", "mock", "mocks", "__tests__", "__mocks__", "testing",
+    "certora", "audit", "audits", "deployments", "deployment", "broadcast",
+    "docs", "doc",
+}
+
+
+def is_non_production_path(filename: str) -> bool:
+    """True for paths excluded from fund-path classification regardless of
+    keywords: docs/config/artifact extensions, non-production dirs, and
+    test/mock-named stems. Path-segment aware so a real source file whose name
+    merely contains a substring like "test" ("latest_price.rs") is NOT
+    excluded. The recon signal extractor reuses this to split a repo snapshot
+    into production source vs tests/artifacts with the same rules the
+    delta classifier uses.
+    """
+    lower = filename.lower()
+    if lower.endswith(_NON_CODE_EXTENSIONS):
+        return True
+    segments = lower.split("/")
+    if any(seg in _NON_PRODUCTION_DIRS for seg in segments[:-1]):
+        return True
+    base = segments[-1]
+    name = base.rsplit(".", 1)[0]  # strip extension
+    return (
+        name.startswith("test_")
+        or name.startswith("mock_")
+        or name.endswith(("_test", "_tests", "_mock", "_mocks"))
+        or name in {"test", "tests", "mock", "mocks"}
+        or ".test." in base
+        or ".spec." in base  # JS/TS specs: foo.spec.ts
+        or base.endswith(".t.sol")  # Foundry test contracts
+    )
+
+
 def classify_fund_path(filename: str, keywords: list[str]) -> str | None:
     """Return the first FUND_PATH_KEYWORD the path matches, or None.
 
@@ -212,39 +255,9 @@ def classify_fund_path(filename: str, keywords: list[str]) -> str | None:
     INCLUDING real source — only non-code extensions and known artifact dirs are
     dropped, never .sol/.rs/.move/.vy source.
     """
+    if is_non_production_path(filename):
+        return None
     lower = filename.lower()
-    # Non-code extensions: docs/reports, config/data, formal-verification specs,
-    # images. A fund keyword in one of these is a filename coincidence, not code.
-    if lower.endswith(
-        (
-            ".md", ".txt", ".rst", ".pdf",
-            ".json", ".yaml", ".yml", ".toml", ".lock", ".cfg", ".ini", ".env", ".csv",
-            ".spec", ".conf",
-            ".svg", ".png", ".jpg", ".jpeg", ".gif",
-        )
-    ):
-        return None
-    segments = lower.split("/")
-    # Non-production dirs: tests/mocks + formal-verification, deploy, audit, docs.
-    excluded_dirs = {
-        "test", "tests", "mock", "mocks", "__tests__", "__mocks__", "testing",
-        "certora", "audit", "audits", "deployments", "deployment", "broadcast",
-        "docs", "doc",
-    }
-    if any(seg in excluded_dirs for seg in segments[:-1]):
-        return None
-    base = segments[-1]
-    name = base.rsplit(".", 1)[0]  # strip extension
-    if (
-        name.startswith("test_")
-        or name.startswith("mock_")
-        or name.endswith(("_test", "_tests", "_mock", "_mocks"))
-        or name in {"test", "tests", "mock", "mocks"}
-        or ".test." in base
-        or ".spec." in base  # JS/TS specs: foo.spec.ts
-        or base.endswith(".t.sol")  # Foundry test contracts
-    ):
-        return None
     for kw in keywords:
         if kw in lower:
             return kw

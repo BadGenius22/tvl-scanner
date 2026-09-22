@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(dewaxguard)",
+      "Skill(dewaxdlt)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "Skill(schedule)"
+    ]
+  }
+}

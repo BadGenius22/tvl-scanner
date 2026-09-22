@@ -13,6 +13,7 @@ from tvl_scanner.enrich.github_delta import (
     audit_branches_ahead,
     compare_commits,
     fetch_delta,
+    get_commit_before,
     get_default_branch,
     get_head_sha,
 )
@@ -275,3 +276,28 @@ async def test_audit_branches_ahead_empty_on_error(httpx_mock: HTTPXMock) -> Non
         url="https://api.github.com/repos/o/r/branches?per_page=100", status_code=404
     )
     assert await audit_branches_ahead("o", "r", "main") == []
+
+
+async def test_get_commit_before_resolves_sha(httpx_mock: HTTPXMock) -> None:
+    """The recon baseline lookup: audit DATE → audit COMMIT."""
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/commits?until=2026-05-01T23%3A59%3A59Z&per_page=1",
+        json=[{"sha": "auditsha"}],
+    )
+    assert await get_commit_before("o", "r", "2026-05-01T23:59:59Z") == "auditsha"
+
+
+async def test_get_commit_before_young_repo_returns_none(httpx_mock: HTTPXMock) -> None:
+    """Empty list = no commit predates `until` (repo younger than the date)."""
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/commits?until=2026-05-01T00%3A00%3A00Z&per_page=1",
+        json=[],
+    )
+    assert await get_commit_before("o", "r", "2026-05-01T00:00:00Z") is None
+
+
+async def test_get_commit_before_http_error_returns_none(httpx_mock: HTTPXMock) -> None:
+    httpx_mock.add_response(
+        url="https://api.github.com/repos/o/r/commits?until=x&per_page=1", status_code=404
+    )
+    assert await get_commit_before("o", "r", "x") is None

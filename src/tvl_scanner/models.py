@@ -707,6 +707,131 @@ class DeltaWatchResult(BaseModel):
         return self.files_truncated and bool(self.notable_commits)
 
 
+class ReconSignals(BaseModel):
+    """Deterministic code-level signals extracted from a protocol's repo snapshot.
+
+    Tree signals classify the snapshot's file LIST (production source vs tests
+    vs fund-exit-named files); content signals count curated marker regexes
+    inside source file contents. Every count is None when the signal could not
+    be computed (no snapshot, tarball over the size cap, non-code repo) —
+    scoring treats unknown as neutral, never as zero, per the project-wide
+    convention in rank/priority.py.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    # Tree signals (paths only)
+    source_files: int | None = Field(
+        default=None,
+        description="Production source files (.sol/.rs/.move/.vy, tests/artifacts excluded)",
+    )
+    test_files: int | None = Field(
+        default=None,
+        description="Test/mock source files (test dirs, *_test stems, .t.sol, .spec.*)",
+    )
+    fund_path_files: int | None = Field(
+        default=None,
+        description="Snapshot files matching FUND_PATH_KEYWORDS (classify_fund_path)",
+    )
+    has_ci: bool | None = Field(default=None, description=".github/workflows/*.yml present")
+    toolchain: Literal["foundry", "hardhat", "other", "unknown"] = Field(
+        default="unknown", description="Build toolchain detected from config files"
+    )
+
+    # Content signals (regex counts over source contents)
+    scanned_loc: int | None = Field(
+        default=None, description="Total lines in the files grepped for markers"
+    )
+    privileged_markers: int | None = Field(
+        default=None,
+        description="onlyOwner/onlyRole/msg.sender==-style access-gate occurrences",
+    )
+    initializer_markers: int | None = Field(
+        default=None,
+        description="initializer/initialize()/Initializable occurrences (uninit-proxy class)",
+    )
+    upgradeable_markers: int | None = Field(
+        default=None, description="Upgradeable/UUPS/proxy-pattern occurrences"
+    )
+    oracle_markers: int | None = Field(
+        default=None,
+        description="Price-feed occurrences (latestAnswer/getReserves/AggregatorV3/Pyth/...)",
+    )
+    reentrancy_guard_markers: int | None = Field(
+        default=None, description="nonReentrant/ReentrancyGuard occurrences (mitigation context)"
+    )
+    rust_access_markers: int | None = Field(
+        default=None,
+        description="Anchor/Solana access-control occurrences (#[access_control]/require_auth)",
+    )
+
+
+class ReconResult(BaseModel):
+    """Recon output: one shortlisted candidate with code-level attack-surface signals.
+
+    The recon stage sits between target selection (run / immunefi-scan) and the
+    deep-audit skills (x-ray → dewaxguard → fizz): it takes a ranked candidate,
+    diffs its repo over a baseline window (audit date when known, else a
+    trailing time window) for fund-exit-path churn, greps a source snapshot for
+    curated risk markers, and emits an attack_surface_score.
+
+    Field names overlap CandidateRecord / DeltaWatchResult where they apply
+    (target_name, display_name, github_repo, bounty_*, baseline_*) so a picked
+    recon record lifts into the same Phase 2a vault handoff.
+    """
+
+    model_config = ConfigDict(use_enum_values=True)
+
+    # Identity (vault-liftable)
+    target_name: str
+    display_name: str
+    protocol_type: str = "Recon candidate"
+    languages: list[Language] = Field(default_factory=list)
+    chain: Chain | None = None
+    github_repo: str
+    tvl_usd: float = 0.0
+    tvl_resolved: bool = False
+    bounty_program: str = "none"
+    bounty_url: str | None = None
+    bounty_max_payout_usd: int | None = None
+    # Bounty-backed targets can pay out a finding today; no-program targets are
+    # pre-bounty watch candidates (deep audit waits until a program launches).
+    payout_path: Literal["bounty", "none"] = "none"
+
+    # Selection provenance (which scan + formula produced this candidate; the
+    # two formulas' scores are NOT comparable across records)
+    priority_score: float | None = None
+    priority_formula: Literal["tvl", "bounty"] | None = None
+    shortlist_source: str = "run"
+
+    # Delta window (baseline → HEAD)
+    default_branch: str | None = None
+    baseline_commit: str | None = None
+    baseline_source: Literal[
+        "audited_commit", "audit_date", "window", "last_checked", "first_run"
+    ] = "first_run"
+    baseline_date: date | None = None
+    head_commit: str | None = None
+    total_commits: int = Field(0, ge=0)
+    total_files_changed: int = Field(0, ge=0)
+    fund_path_changes: list[FundPathChange] = Field(default_factory=list)
+    fund_path_files_changed: int = Field(0, ge=0)
+    fund_path_additions: int = Field(0, ge=0)
+    files_truncated: bool = False
+
+    # Snapshot + signals + score
+    snapshot_present: bool = Field(
+        False, description="False when the tarball snapshot was unavailable/over-cap "
+        "(content signals neutral, delta still valid)"
+    )
+    signals: ReconSignals = Field(default_factory=ReconSignals)
+    attack_surface_score: float = Field(5.0, ge=0, le=10)
+    attack_surface_subscores: dict[str, float] = Field(default_factory=dict)
+
+    why_interesting: str = ""
+    checked_date: date
+
+
 class ScanReport(BaseModel):
     """Top-level container for a single scan run, written to artifacts/scan.json."""
 

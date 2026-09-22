@@ -23,6 +23,41 @@ then optionally L and M.
 
 ---
 
+## Batch R — the red-team funnel ★ R1 shipped 2026-09-01
+
+The scanner now spans a three-layer funnel: target selection (`run` /
+`immunefi-scan`) → **recon** (`tvl-scanner recon`, new) → deep audit
+(x-ray → dewaxguard → fizz skills, outside this repo).
+
+**R1 (shipped)**: recon core. Both scans persist machine-readable
+shortlists (`artifacts/ranked-{scan,immunefi-scan}.json`); `tvl-scanner
+recon --union --top 20` selects from them (interleaved by rank position,
+$100K TVL eligibility floor, FilterFunnel transparency), then per
+candidate: diff-baseline resolution (watchlist audited commit → audit
+date → trailing 90d window → state → first run), fund-exit-path delta
+(reusing delta-watch machinery), a cached tarball repo snapshot with
+marker greps (privileged/initializer/proxy/oracle/reentrancy/Anchor
+access), and an `attack_surface_score` (0.40 delta + 0.20 test-gap +
+0.20 privileged + 0.20 oracle; unknown = neutral 5.0). Output routes by
+`payout_path`: bounty-backed → vault handoff phrase; no-program →
+paste-able delta-watch watchlist entry (pre-bounty watch).
+
+**R2 (planned) — deeper signals**: source-level fork-vs-custom ratio
+(import graph vs known parents, extending the bytecode/wrapper checks);
+Anchor/Solana content patterns beyond access-control macros;
+exploit-pattern greps (ERC4626 share inflation, oracle-manip recipes)
+grounded in DeFiHackLabs; repo-provenance field on `github_repo`
+(org-guessed vs authoritative — today the report shows the URL for
+eyeball verification instead); LLM brief hook point (converges with
+Batch L).
+
+**R3 (planned) — automation glue**: materialize `~/audit/<date>-<slug>/`
+workspaces from recon records (clone at the pinned HEAD, drop the
+candidate YAML in), and an x-ray queue driver that walks the recon
+report's bounty-backed candidates.
+
+---
+
 ## Batch J — On-chain ground truth checks ★ MUST DO
 
 **Three deterministic, mechanical filters with zero ongoing API cost.**

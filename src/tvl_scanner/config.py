@@ -153,6 +153,30 @@ class Settings(BaseSettings):
     # endpoints are rate-limited but fine for a small watchlist.
     SOLANA_RPC_FALLBACK: str = "https://solana-rpc.publicnode.com"
     ETH_RPC_FALLBACK: str = "https://ethereum.publicnode.com"
+
+    # Recon: code-level attack-surface signals for shortlisted candidates
+    # (git delta window over fund-exit paths + repo-snapshot marker greps).
+    # Selects targets from the ranked-{scan,immunefi-scan}.json artifacts the
+    # two scan entry points persist. State (baseline/head commit per candidate)
+    # persists under ARTIFACTS_DIR so reruns are incremental, like delta-watch.
+    RECON_STATE_FILE: str = "recon_state.json"
+    # Tarball snapshot downloads are the heavy part; keep concurrency low so a
+    # 20-candidate recon doesn't saturate the link or the GitHub quota.
+    RECON_CONCURRENCY: int = 3
+    # Fallback delta window when no audit date is known: diff the trailing N
+    # days ("fund-path churn in the last quarter" instead of "since audit").
+    RECON_SOURCE_WINDOW_DAYS: int = 90
+    # Upper bound on the diff window even when the last audit is older —
+    # bounds compare-call fan-out on stale-audit repos (github_delta's splitter
+    # would otherwise subdivide a multi-year diff into up to 60 calls each).
+    RECON_MAX_BASELINE_WINDOW_DAYS: int = 365
+    # Snapshot guards: skip repos whose tarball exceeds this (content signals
+    # degrade to neutral; the git-delta signals stay valid).
+    RECON_MAX_TARBALL_MB: int = 300
+    # Extracted-snapshot cache lives under ARTIFACTS_DIR, keyed by repo + ref,
+    # so a rerun at the same pinned HEAD costs zero downloads.
+    RECON_CACHE_DIR: str = "recon-cache"
+
     # A changed file is a "fund-exit path" if its path (case-insensitive)
     # contains one of these substrings. Originally tuned from the omnipair delta
     # (withdraw/remove_collateral/remove_liquidity/borrow/circuit-breaker), then

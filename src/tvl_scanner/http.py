@@ -170,6 +170,74 @@ async def post_json(
     return None  # unreachable, mypy satisfaction
 
 
+async def get_bytes(
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    client: httpx.AsyncClient | None = None,
+    max_bytes: int | None = None,
+) -> bytes:
+    """GET `url` and return the raw response body. Same retry/backoff/rate-limit
+    semantics as `get_json`, for endpoints that return binary payloads (the
+    GitHub tarball snapshots the recon stage downloads).
+
+    `max_bytes` is a pre-flight guard on the final Content-Length (after
+    redirects): an over-large body raises HttpError before it is read, so a
+    monorepo snapshot cannot balloon memory. Responses without Content-Length
+    (chunked) cannot be pre-checked and are returned as-is.
+    """
+    s = settings()
+    owns_client = client is None
+    if owns_client:
+        client = httpx.AsyncClient(
+            timeout=s.HTTP_TIMEOUT_SECONDS,
+            follow_redirects=True,
+            verify=shared_ssl_context(),
+        )
+    assert client is not None  # for mypy
+
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(s.HTTP_MAX_RETRIES),
+            wait=wait_exponential(
+                multiplier=s.HTTP_BACKOFF_SECONDS,
+                min=min(1.0, s.HTTP_BACKOFF_SECONDS),
+                max=30,
+            ),
+            retry=retry_if_exception_type(RETRYABLE),
+            reraise=True,
+        ):
+            with attempt:
+                response = await client.get(url, headers=headers)
+                if is_rate_limited(response):
+                    raise httpx.ReadTimeout(f"{response.status_code} rate limited")
+                if response.status_code >= 500:
+                    raise httpx.ReadTimeout(f"upstream {response.status_code}")
+                declared = response.headers.get("content-length")
+                if (
+                    max_bytes is not None
+                    and declared is not None
+                    and int(declared) > max_bytes
+                ):
+                    raise HttpError(
+                        f"payload too large for {url}: {int(declared)} bytes > {max_bytes}"
+                    )
+                response.raise_for_status()
+                return response.content
+    except HttpError:
+        raise
+    except httpx.HTTPStatusError as exc:
+        raise HttpError(
+            f"HTTP {exc.response.status_code} for {url}: {exc.response.text[:200]}"
+        ) from exc
+    except RETRYABLE as exc:
+        raise HttpError(f"Transport failure for {url}: {exc}") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+    return b""  # unreachable, mypy satisfaction
+
+
 def make_client(headers: dict[str, str] | None = None) -> httpx.AsyncClient:
     """Construct a reusable AsyncClient with the global timeout applied."""
     s = settings()

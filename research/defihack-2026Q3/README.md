@@ -21,6 +21,9 @@ in the same transaction*, amplified by zero-fee Morpho flash loans.
 > DeFiHackLabs `src/test/` and import `../basetest.sol` + forge-std — they will not
 > compile standalone in this repo. Run them from a full DeFiHackLabs clone, e.g.
 > `forge test --contracts ./src/test/2026-07/SummerFi_exp.sol -vvv`.
+> (Exception: `poc/2026-07/Lien_exp.sol` was authored in-repo for the 2026-07-24
+> Lien Finance incident, which has no upstream PoC — see
+> `reports/2026-09-17-lien-deepdive.md`.)
 
 ---
 
@@ -285,6 +288,7 @@ reverted transactions. 331.8 ETH (~17%) later returned.)*
 | 07-15 | Ostium | $23.75M | compromised oracle signer key (off-chain) | Halborn/Ostium post-mortem |
 | 07-15 | 42DAO | $912k | oracle poke→VAT→Dog with no deviation checks | SlowMist/PeckShield |
 | 07-17/28 | Across (Solana) | $3.6M | relayer indexer ignored tx status | Asymmetric Research |
+| 07-24 | Lien Finance | $542k | running-counter equivalence in exchangeEquivalentBonds → free unbacked bond mint sold into OTC venues | `poc/2026-07/Lien_exp.sol` |
 | 07-29 | LULA | $578k | privileged recycle() pulls from pair + sync | AutoSec/Phalcon |
 | 08-02 | LpdFi | $693k | live pair reserves as accounting truth | BlockSec |
 | 08-09 | USM | 70.8 ETH | split-invariance violation in defund() | `poc/2026-08/USM_exp.sol` |

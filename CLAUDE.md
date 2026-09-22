@@ -35,6 +35,12 @@ python -m tvl_scanner immunefi-scan --chains ethereum,arbitrum,base --cap 60
 python -m tvl_scanner immunefi-scan --min-critical-floor 25000 --max-scope 60 \
     --fresh-scope 180 --updated-within 180 --exclude-boosted --exclude-invite-only
 
+# Recon: code-level attack-surface signals on the shortlists the scans persist
+# (git delta over fund-exit paths + repo-snapshot marker greps → attack_surface_score)
+python -m tvl_scanner recon                      # union of run + immunefi-scan, top 20
+python -m tvl_scanner recon --from immunefi --top 10 --min-tvl 250000
+python -m tvl_scanner recon --targets alpha,beta --refresh-cache
+
 # Verify pass-backed secrets are reachable
 tvl-scanner check-secrets
 
@@ -65,6 +71,7 @@ Stage 1: Discover    → artifacts/candidates.json       (DiscoveredContract)
 Stage 2: Enrich      → artifacts/enriched.json         (EnrichedCandidate)
 Stage 3: Audit-check → artifacts/audit_status.json     (AuditedCandidate)
 Stage 4: Rank+Report → reports/YYYY-MM-DD-scan.md + candidates/*.md (CandidateRecord)
+                    → artifacts/ranked-{label}.json   (machine-readable shortlist; recon reads this)
 ```
 
 ### Delta-watch mode (alternate entry, not part of the 4-stage scan)
@@ -117,6 +124,16 @@ Alongside the rubric, the profile carries what decides whether a finding is *sub
 `exclusions` captures the seven prose fields the scanner previously read none of (`outOfScopeAndRules`, the four `defaultOutOfScope*`, `defaultFeasibilityLimitations`, `defaultProhibitedActivities`, plus `customOutOfScopeInformation` / `customProhibitedActivities` / `prioritizedVulnerabilities`). That is ~3.5K characters per program of auto-invalidators: which actors are assumed trusted, which preconditions are ruled infeasible, which activities are prohibited. Rendered in the record body under "Scope limits and exclusions"; kept out of the YAML dump, where only `bounty_exclusion_sections` names which sections exist. `impacts` carries the program's own table at **every** severity — a finding that maps to no row is unpayable, and a reachable Medium beats an unreachable Critical.
 
 Two data quirks the extractors exist to absorb: Immunefi's editor writes `_blank_` into an unfilled prose section (118 occurrences), alongside bare `.` (35) and "To be determined" (34), so `_text` treats those as absent rather than quoting an empty section back as a published constraint. And the catalogue has no `programDocumentations` key despite third-party tooling referencing one, so `resources` is built from `websiteUrl` / `githubUrl` / `audits[].url` only.
+
+### Recon mode (code-level attack-surface signals — alternate entry)
+
+`tvl_scanner.recon` (`tvl-scanner recon`, orchestrated by `recon/orchestrator.run_recon`) is the middle layer of the red-team funnel: target selection (`run` / `immunefi-scan`) → **recon** → deep audit (the x-ray / dewaxguard / fizz skills, outside this repo). It never discovers protocols itself — it reads the ranked shortlists both scan entry points now persist via `rank/report.write_ranked` (`artifacts/ranked-scan.json`, `artifacts/ranked-immunefi-scan.json`).
+
+Selection (`recon/shortlist.py`): the union INTERLEAVES the two lists by rank position and dedupes by `target_name` (preferring the Immunefi record — it carries the BountyProfile), because the tvl and bounty formulas' scores are documented as incomparable. `--min-tvl` defaults to the global `MIN_TVL_USD` ($100K) — an eligibility floor, not a work order; volume is controlled by `--top` (default 20). Every drop is counted with a named reason (`FilterFunnel`, parameterized with `subject`/`origin` so recon reuses the immunefi-scan class).
+
+Per candidate (`recon/orchestrator.check_candidate`): resolve the diff baseline (precedence: delta-watch watchlist `audited_at_commit` → commit at `bounty_profile.latest_audit_at`, clamped to `RECON_MAX_BASELINE_WINDOW_DAYS` → commit at now − `RECON_SOURCE_WINDOW_DAYS` (the trailing window; for no-audit-date candidates the signal is recent churn, not since-audit churn) → state `last_checked_commit` → first run pins HEAD with delta unknown), `fetch_delta` the window (reusing delta-watch's fund-path classification unchanged), fetch the repo snapshot at HEAD (`recon/sources.py` — one tarball download per repo, path-traversal-guarded extraction, disk-cached under `artifacts/recon-cache/` keyed by repo+ref so a rerun at the same HEAD costs nothing), extract pure signals (`recon/signals.py`: tree signals — production-source/test/fund-path file counts, CI, toolchain — and content greps for privileged/initializer/proxy/oracle/reentrancy-guard/Anchor-access markers), and score (`recon/score.py`: `attack_surface_score` = 0.40·fund_delta + 0.20·test_gap + 0.20·privileged + 0.20·oracle, unknown = neutral 5.0 per the project convention; it ranks WITHIN the recon output only and is never compared to `priority_score`).
+
+Degradation contract: no repo → dropped with a funnel reason; snapshot unavailable/over `RECON_MAX_TARBALL_MB` → content signals neutral, git-delta signals stay valid; one candidate's exception never aborts the run. State persists at `artifacts/recon_state.json` (delta-watch format). Output (`recon/report.py`): `reports/{date}-recon.md` + per-candidate records whose frontmatter reuses the delta-watch key names and adds NEW additive keys (`recon_signals`, `attack_surface_score`, `attack_surface_subscores`, `payout_path`) — the Phase 2a lift ignores unknown keys. `payout_path` routes the next step: `bounty` → the `new audit on <slug>` vault trigger (deep-audit ready); `none` → a paste-able `delta_watch_targets.yaml` entry (pre-bounty watch — deep audit waits until a program launches, because until then a critical has no payout path).
 
 Top-level orchestration lives in `src/tvl_scanner/pipeline.py`. There are **two parallel discovery paths** that converge before Stage 2 enrichment, deduped by `defillama_slug`:
 

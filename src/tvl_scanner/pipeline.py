@@ -26,7 +26,7 @@ from tvl_scanner.enrich.enricher import enrich_all, write_enriched
 from tvl_scanner.http import make_client
 from tvl_scanner.models import Chain, EnrichedCandidate
 from tvl_scanner.rank.priority import rank_all
-from tvl_scanner.rank.report import write_report
+from tvl_scanner.rank.report import write_ranked, write_report
 
 if TYPE_CHECKING:
     from tvl_scanner.enrich.immunefi_filter import ProgramFilter
@@ -120,6 +120,7 @@ async def run_pipeline(
         exclude_slugs=exclude_slugs,
     )
     summary_path, candidate_paths = write_report(ranked, scan_date)
+    write_ranked(ranked, scan_date)  # machine-readable shortlist for the recon stage
     log.info(
         "ranked %d candidates (cutoff=%.1f, cap=%d); wrote %d per-candidate files",
         len(ranked),
@@ -203,6 +204,7 @@ async def run_immunefi_scan(
     summary_path, candidate_paths = write_report(
         ranked, scan_date, label="immunefi-scan", filter_summary=funnel.render_markdown()
     )
+    write_ranked(ranked, scan_date, label="immunefi-scan")  # recon shortlist source
     log.info(
         "ranked %d bounty candidates (cutoff=%.1f, cap=%d); wrote %d per-candidate files",
         len(ranked),

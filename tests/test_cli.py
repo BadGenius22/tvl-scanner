@@ -179,3 +179,50 @@ def test_parse_exclude_slugs_strips_trailing_comments() -> None:
 
 def test_parse_exclude_slugs_ignores_a_comment_only_line() -> None:
     assert _parse_exclude_slugs("# nothing here\n   # nor here\n") == set()
+
+
+# ---- recon command wiring ----
+
+
+def test_recon_command_passes_options() -> None:
+    """Every recon flag must reach run_recon (dropped ones silently widen a run)."""
+    captured: dict[str, Any] = {}
+
+    async def _fake(**kwargs: Any) -> Path:
+        captured.update(kwargs)
+        return Path("/dev/null")
+
+    with patch("tvl_scanner.recon.run_recon", new=AsyncMock(side_effect=_fake)):
+        result = CliRunner().invoke(
+            app,
+            [
+                "recon",
+                "--top", "7",
+                "--from", "immunefi",
+                "--min-tvl", "250000",
+                "--targets", "alpha,beta",
+                "--refresh-cache",
+            ],
+        )
+    assert result.exit_code == 0, result.output
+    assert captured["from_"] == "immunefi"
+    assert captured["top"] == 7
+    assert captured["min_tvl"] == 250_000
+    assert captured["targets"] == {"alpha", "beta"}
+    assert captured["refresh_cache"] is True
+
+
+def test_recon_command_defaults() -> None:
+    captured: dict[str, Any] = {}
+
+    async def _fake(**kwargs: Any) -> Path:
+        captured.update(kwargs)
+        return Path("/dev/null")
+
+    with patch("tvl_scanner.recon.run_recon", new=AsyncMock(side_effect=_fake)):
+        result = CliRunner().invoke(app, ["recon"])
+    assert result.exit_code == 0, result.output
+    assert captured["from_"] == "union"
+    assert captured["top"] == 20
+    assert captured["min_tvl"] is None  # → settings().MIN_TVL_USD inside select
+    assert captured["targets"] is None

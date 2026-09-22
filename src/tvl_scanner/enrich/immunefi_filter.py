@@ -345,10 +345,22 @@ class ProgramFilter(BaseModel):
 
 
 class FilterFunnel:
-    """Counts what each filter removed, so a small shortlist is explainable."""
+    """Counts what each filter removed, so a small shortlist is explainable.
 
-    def __init__(self, fetched: int = 0) -> None:
+    `subject`/`origin` parameterize the wording (recon reuses this class for
+    shortlist candidates, not Immunefi programs); the defaults reproduce the
+    original immunefi-scan output byte for byte.
+    """
+
+    def __init__(
+        self,
+        fetched: int = 0,
+        subject: str = "programs",
+        origin: str = "from the catalogue",
+    ) -> None:
         self.fetched = fetched
+        self.subject = subject
+        self.origin = origin
         self.dropped: Counter[str] = Counter()
 
     def drop(self, reason: str) -> None:
@@ -374,7 +386,7 @@ class FilterFunnel:
     def render(self, *, indent: str = "  ") -> str:
         """Plain-text funnel, widest number right-aligned."""
         rows = self.rows()
-        lines = [f"{indent}{self.fetched:>5}  programs fetched from the catalogue"]
+        lines = [f"{indent}{self.fetched:>5}  {self.subject} fetched {self.origin}"]
         for reason, count in rows:
             lines.append(f"{indent}{-count:>5}  {reason}")
         lines.append(f"{indent}{'-' * 5}")
@@ -385,7 +397,7 @@ class FilterFunnel:
         """Funnel as a markdown list, for the report header."""
         rows = self.rows()
         if not rows:
-            return f"All {self.fetched} catalogue programs kept — no filter removed anything."
+            return f"All {self.fetched} {self.subject} kept — no filter removed anything."
         lines = [f"**Filter funnel** — {self.fetched} programs fetched:", ""]
         lines.extend(f"- −{count} {reason}" for reason, count in rows)
         lines.append("")

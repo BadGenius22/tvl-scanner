@@ -61,6 +61,11 @@ python -m tvl_scanner run --chains solana,arbitrum,base --min-tvl 100000
 
 # view latest report
 cat reports/$(ls -t reports | head -1)
+
+# recon: code-level attack-surface signals on the shortlists above
+# (git delta over fund-exit paths + repo marker greps → attack_surface_score)
+python -m tvl_scanner recon                     # union of both scans, top 20
+python -m tvl_scanner recon --from immunefi --top 10
 ```
 
 Output: `reports/YYYY-MM-DD-scan.md` (summary) + `reports/YYYY-MM-DD-scan/candidates/*.md` (per-candidate YAML records for Phase 2a lifting).
@@ -73,8 +78,10 @@ Four sequential stages, each producing a JSON artifact:
 [Stage 1: Discover]  → artifacts/candidates.json
 [Stage 2: Enrich]    → artifacts/enriched.json
 [Stage 3: Audit-check] → artifacts/audit_status.json
-[Stage 4: Rank]      → reports/YYYY-MM-DD-scan.md + candidates/
+[Stage 4: Rank]      → reports/YYYY-MM-DD-scan.md + candidates/ + artifacts/ranked-scan.json
 ```
+
+Alternate entries (see CLAUDE.md): `immunefi-scan` (bounty-first discovery over the full live catalogue, `artifacts/ranked-immunefi-scan.json`), `delta-watch` (fresh unaudited commits on fund-exit paths of watched protocols), `deploy-watch` (on-chain deploy/upgrade triggers), and `recon` — the red-team funnel's middle layer: code-level attack-surface signals (git delta + repo-snapshot marker greps) over the union of both scans' shortlists, routing bounty-backed targets to the deep-audit chain (x-ray → dewaxguard → fizz) and no-program targets to a pre-bounty watchlist.
 
 See the plan file for the full design.
 
