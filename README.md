@@ -68,6 +68,25 @@ python -m tvl_scanner recon                     # union of both scans, top 20
 python -m tvl_scanner recon --from immunefi --top 10
 ```
 
+### Hand off a selected target to a separate audit workspace
+
+The scanner ends at discovery. Export one selected JSON record for the separate
+private audit-workflow runner; protocol clones and findings live outside this repo.
+Replace the example repository with the protocol repository you have verified:
+
+```powershell
+python scripts/export_audit_handoff.py --input artifacts/hunt_campaign/selection.json --target origin-arm --repo core=https://github.com/OWNER/REPOSITORY --output artifacts/handoffs/origin-arm.json
+```
+
+The exporter needs only Python's standard library. It preserves observation
+provenance and unresolved scope questions, and does not guess which chain an
+ambiguous anchor belongs to. Repeat `--repo name=URL` for multiple repositories;
+use `--ref name=COMMIT` to request an exact revision. In the sibling workflow repo:
+
+```powershell
+python workflow.py start --intake ../tvl-scanner/artifacts/handoffs/origin-arm.json --audits-root ../audits
+```
+
 Output: `reports/YYYY-MM-DD-scan.md` (summary) + `reports/YYYY-MM-DD-scan/candidates/*.md` (per-candidate YAML records for Phase 2a lifting).
 
 ## Architecture
